@@ -1,4 +1,4 @@
-﻿# Doc 04 — Django Core REST & Triage API
+# Doc 04 — Django Core REST & Triage API
 
 > **Series position:** 04 of 10 · **Owner:** Subagent 4 (API Developer)
 > **Consumes:** Doc 01 §7 (DTOs), §8 (transitions), §10 (internal RPC), §12 (route index), §15 (errors); Doc 02 (models, storage); Doc 03 (leases)

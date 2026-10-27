@@ -26,7 +26,7 @@ DESCRIPTION = (
 
 
 def make_handler(cfg: Any, client: Any) -> Callable[[ClaimNextTaskArgs], dict]:
-    """Build ``handler(args: Model) -> dict`` bound to this process's cfg/client."""
+    """Build ``handler(args: Model) -> dict`` with config and client closed over."""
 
     def handler(args: ClaimNextTaskArgs) -> dict:
         LOGGER.info(
@@ -50,6 +50,7 @@ def make_handler(cfg: Any, client: Any) -> Callable[[ClaimNextTaskArgs], dict]:
             lease_ttl_default=cfg.lease_ttl_seconds,
             heartbeat_interval_default=cfg.heartbeat_interval_seconds,
             long_path_prefix=cfg.long_path_prefix,
+            storage_root=cfg.storage_root,
         )
 
     return handler

@@ -1,10 +1,11 @@
 import type { ApiErrorBody } from "@/lib/types/api";
 import type { ErrorCode } from "@/lib/types/enums";
+import { classifyFetchError, decodeError, decodeJson } from "./decode";
 import { resolveMockRequest } from "./fixtures";
 
 /**
  * Doc 06 §3.1 — typed fetch client with no domain knowledge: URL building, JSON
- * decoding, error-envelope decoding, abort and a bounded GET retry.
+ * decoding, error-envelope decoding, abort, retry. Never sets `Authorization`.
  */
 
 export type ApiErrorCode = ErrorCode | "RATE_LIMITED" | "NETWORK_ERROR" | "TIMEOUT" | "ABORTED";
@@ -37,6 +38,21 @@ export class ApiError extends Error {
     const e = body.error;
     return new ApiError(e.code as ApiErrorCode, status, e.message, e.retryable, e.detail ?? {}, e.request_id);
   }
+
+  /** 401/403 — the UI pauses queries and shows a sticky toast (Doc 06 §3.6). */
+  get isAuth(): boolean {
+    return this.code === "AUTH_MISSING" || this.code === "AUTH_INVALID" || this.status === 401 || this.status === 403;
+  }
+
+  /** 507 — a rolled-back disk write; surface the degraded banner. */
+  get isStorage(): boolean {
+    return this.code === "STORAGE_WRITE_FAILED" || this.status === 507;
+  }
+
+  /** 409 — the state machine rejected the action; the guard reason must be shown verbatim. */
+  get isConflict(): boolean {
+    return this.status === 409;
+  }
 }
 
 export const API_BASE = "/api/v1";
@@ -60,17 +76,8 @@ export function withQuery(path: string, params: Record<string, QueryValue>): str
   return qs ? `${path}?${qs}` : path;
 }
 
-export function isAbortError(err: unknown): boolean {
-  return err instanceof DOMException && err.name === "AbortError";
-}
-
 type Method = "GET" | "POST" | "PATCH" | "DELETE";
-
-type RequestOptions = {
-  method: Method;
-  body?: unknown;
-  signal?: AbortSignal;
-};
+type RequestOptions = { method: Method; body?: unknown; signal?: AbortSignal };
 
 function makeSignal(outer?: AbortSignal): AbortSignal {
   if (typeof AbortSignal.timeout !== "function") return outer ?? new AbortController().signal;
@@ -80,41 +87,10 @@ function makeSignal(outer?: AbortSignal): AbortSignal {
   return outer;
 }
 
-async function decodeError(res: Response): Promise<ApiError> {
-  const text = await res.text().catch(() => "");
-  if (text) {
-    try {
-      const parsed = JSON.parse(text) as Partial<ApiErrorBody>;
-      if (parsed.error && typeof parsed.error.code === "string") {
-        return ApiError.fromEnvelope(parsed as ApiErrorBody, res.status);
-      }
-    } catch {
-      /* fall through to the synthesized error */
-    }
-  }
-  const code: ApiErrorCode =
-    res.status === 401 || res.status === 403
-      ? "AUTH_INVALID"
-      : res.status === 507
-        ? "STORAGE_WRITE_FAILED"
-        : res.status === 502 || res.status === 503 || res.status === 504
-          ? "BACKEND_UNAVAILABLE"
-          : "INTERNAL_ERROR";
-  return new ApiError(code, res.status, res.statusText || "Request failed", code === "BACKEND_UNAVAILABLE");
-}
-
-async function decodeJson<T>(res: Response): Promise<T> {
-  if (res.status === 204 || res.headers.get("content-length") === "0") return undefined as T;
-  const text = await res.text();
-  if (!text) return undefined as T;
-  return JSON.parse(text) as T;
-}
-
 function shouldRetry(error: unknown, attempt: number, method: Method): boolean {
-  if (method !== "GET") return false;
-  if (attempt >= RETRY_DELAYS_MS.length) return false;
+  if (method !== "GET" || attempt >= RETRY_DELAYS_MS.length) return false;
   if (error instanceof ApiError) {
-    return error.code === "BACKEND_UNAVAILABLE" || error.code === "NETWORK_ERROR";
+    return error.code === "BACKEND_UNAVAILABLE" || error.code === "NETWORK_ERROR" || error.code === "TIMEOUT";
   }
   return true;
 }
@@ -139,16 +115,13 @@ async function attempt<T>(path: string, options: RequestOptions, attemptIndex: n
       cache: "no-store",
     });
   } catch (err) {
-    if (isAbortError(err) || (err instanceof DOMException && err.name === "TimeoutError")) {
-      throw new ApiError("TIMEOUT", 0, "Request timed out", true);
-    }
-    if (options.signal?.aborted) throw new ApiError("ABORTED", 0, "Request aborted", false);
-    const networkError = new ApiError("NETWORK_ERROR", 0, "Orchestration engine unreachable", true);
-    if (shouldRetry(networkError, attemptIndex, options.method)) {
+    const error = classifyFetchError(err, options.signal);
+    if (error.code === "ABORTED") throw error;
+    if (shouldRetry(error, attemptIndex, options.method)) {
       await wait(RETRY_DELAYS_MS[attemptIndex]);
       return attempt<T>(path, options, attemptIndex + 1);
     }
-    throw networkError;
+    throw error;
   }
 
   if (!res.ok) {
@@ -167,14 +140,13 @@ async function attempt<T>(path: string, options: RequestOptions, attemptIndex: n
   }
 }
 
-function request<T>(path: string, options: RequestOptions): Promise<T> {
-  return attempt<T>(path, options, 0);
-}
+const request = <T>(path: string, options: RequestOptions): Promise<T> => attempt<T>(path, options, 0);
 
 export function apiGet<T>(path: string, init?: { signal?: AbortSignal }): Promise<T> {
   return request<T>(path, { method: "GET", signal: init?.signal });
 }
 
+/** POST sends `{}` when no body is supplied; review approve accepts an empty JSON body (Doc 01 §8, T8). */
 export function apiPost<T>(path: string, body?: unknown, init?: { signal?: AbortSignal }): Promise<T> {
   return request<T>(path, { method: "POST", body: body === undefined ? {} : body, signal: init?.signal });
 }

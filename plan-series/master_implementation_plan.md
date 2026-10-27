@@ -1,4 +1,4 @@
-﻿# ATLAS-MCP: Autonomous Agentic Orchestrator & Command Center
+# ATLAS-MCP: Autonomous Agentic Orchestrator & Command Center
 ## Master Architectural Blueprint & Implementation Specification
 
 ---

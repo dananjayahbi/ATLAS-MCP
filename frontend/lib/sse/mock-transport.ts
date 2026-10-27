@@ -48,9 +48,13 @@ export function createMockTransportFactory(options: MockTransportOptions = {}): 
       options.taskId ?? url.match(/\/stream\/tasks\/([^/?#]+)\/log/)?.[1] ?? undefined;
     const isTaskChannel = scopedTaskId !== undefined;
 
-    const events: readonly TaskEventDTO[] = MOCK_EVENTS.filter((event) =>
+    const all: readonly TaskEventDTO[] = MOCK_EVENTS;
+    const scoped = all.filter((event) =>
       isTaskChannel ? matchesChannelB(event, scopedTaskId) : matchesChannelA(event),
     );
+    // The fixture spreads log lines across many task ids, so a strict R3 filter can
+    // leave a pane almost empty offline. Fall back to the whole fixture for dev UX.
+    const events = scoped.length > 0 ? scoped : all;
 
     let cursor = 0;
     let closed = false;

@@ -1,4 +1,4 @@
-﻿"""Generate the frontend mock fixture pack defined by Doc 01 §16.
+"""Generate the frontend mock fixture pack defined by Doc 01 §16.
 
 Deterministic: no randomness, no clock reads. Re-running produces byte-identical
 files so the fixture pack can be committed and diffed.

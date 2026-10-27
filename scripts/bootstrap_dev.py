@@ -1,4 +1,4 @@
-﻿"""Generate `.env`, bootstrap the SQLite DB, and print MCP client snippets.
+"""Generate `.env`, bootstrap the SQLite DB, and print MCP client snippets.
 
 Doc 01 §13: `scripts/bootstrap_dev.py` is the single entry point a new
 developer runs after `git clone`.

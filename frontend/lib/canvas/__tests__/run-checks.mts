@@ -1,18 +1,13 @@
 /**
- * Doc 07 §15.1 — local smoke runner for the document contracts.
+ * Doc 07 §15.1 — the single entry point for the canvas self-checks.
  *
- * Runs the same check list as `vitest` without loading PostCSS/Tailwind, so it
- * works even when the Vite config chain is broken.
+ * Usage (from `frontend/`):
+ *   node_modules\.bin\esbuild lib\canvas\__tests__\run-checks.mts ^
+ *     --bundle --platform=node --format=esm ^
+ *     --outfile=lib\canvas\__tests__\checks.mjs
+ *   node lib\canvas\__tests__\checks.mjs
  *
- *   node --experimental-strip-types lib/canvas/__tests__/run-checks.mts
+ * Runs each suite in its own module scope so a failure reports its origin.
  */
-import { runDocumentChecks } from "./document-checks.ts";
-
-const results = runDocumentChecks();
-for (const result of results) {
-  const status = result.ok ? "PASS" : "FAIL";
-  console.log(`${status}  ${result.name}${result.ok ? "" : ` — ${result.detail ?? ""}`}`);
-}
-const failed = results.filter((r) => !r.ok);
-console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
-process.exitCode = failed.length === 0 ? 0 : 1;
+import "./document-checks";
+import "./engine-checks";

@@ -1,4 +1,4 @@
-﻿"""Domain models. Re-exported for migration stability (Doc 02 §2)."""
+"""Domain models. Re-exported for migration stability (Doc 02 §2)."""
 
 from core.models.asset import Asset
 from core.models.checklist import ChecklistItem

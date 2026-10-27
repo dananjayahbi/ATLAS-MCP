@@ -1,8 +1,7 @@
 // Doc 09 §8 / Doc 01 §14.6 — agent output is hostile input. Mirrors the backend
 // `sanitise()` (Doc 09 §8.2) so a UI export is byte-comparable with execution.log.
 
-export const MAX_MESSAGE = 4000;
-const TRUNCATION_MARK = "…[truncated]";
+export const MAX_MESSAGE = 4000;const TRUNCATION_MARK = "…[truncated]";
 
 // S1-S3: CSI / OSC / remaining two-byte escapes.
 const ANSI_OSC = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;

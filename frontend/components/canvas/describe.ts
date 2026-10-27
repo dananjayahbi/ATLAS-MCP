@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * Doc 07 §12.3 — human-readable stroke descriptions for the a11y tree and for
  * status announcements. Pure functions, no DOM.

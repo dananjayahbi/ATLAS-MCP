@@ -13,22 +13,24 @@ Two ceilings exist and they are deliberately different:
     Used by the small projections, where an overflow means an adapter defect.
 
 ``fit_ceiling``
-    Deterministic shrink of ``description`` then ``project_rules`` then the
-    oldest ``attached_images`` until the payload fits, and only *then* raises.
-    A worst-case claim (8 000-char description + 1 200-char rules + 40 DoD items
-    + 10 image paths) genuinely cannot fit in 16 kB, so refusing to shrink would
-    make a legal task unusable.  Every shrink leaves the visible
-    ``…[truncated]`` suffix, so the agent always knows it is reading a partial
-    value -- the loss is signalled, never silent.
+    Deterministic shrink -- ``description``, then ``attached_images`` (oldest
+    first), then ``project_rules`` -- and only *then* raises.  A worst-case claim
+    (8 000-char description + 1 200-char rules + 40 DoD items + 10 long image
+    paths) genuinely cannot fit in 16 kB, so refusing to shrink would make a
+    legal task unusable.  DoD items are never dropped: they are the work
+    contract.  Every shrink leaves the visible ``…[truncated]`` suffix, so the
+    agent always knows it is reading a partial value -- the loss is signalled,
+    never silent.
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from .errors import ProjectionTooLarge
-from .paths import normalize_path
+from .errors import PathOutOfScope, ProjectionTooLarge
+from .paths import from_posix_relative, normalize_path
 
 # --- limits (Doc 01 §9.6) -------------------------------------------------
 
@@ -219,8 +221,13 @@ def _project_dod(raw: Any) -> list[dict]:
     return items
 
 
-def _image_paths(raw: Mapping[str, Any], *, long_path_prefix: bool) -> list[str]:
-    """Collect image paths, preferring ``assets[]`` and falling back to a flat list."""
+def _image_paths(raw: Mapping[str, Any], *, long_path_prefix: bool = False, storage_root: str | None = None) -> list[str]:
+    """Collect image paths, preferring ``assets[]`` and falling back to a flat list.
+
+    Django composes absolute paths (N3); if a response ever carries a
+    storage-relative path instead, it is derived against ``ATLAS_STORAGE_ROOT``
+    and containment-checked, never trusted as-is.
+    """
     paths: list[str] = []
     assets = raw.get("assets")
     if isinstance(assets, Sequence) and not isinstance(assets, (str, bytes)):
@@ -229,15 +236,34 @@ def _image_paths(raw: Mapping[str, Any], *, long_path_prefix: bool) -> list[str]
                 continue
             if asset.get("kind") not in IMAGE_KINDS:
                 continue
-            candidate = asset.get("absolute_path") or asset.get("path")
+            candidate = (
+                asset.get("absolute_path")
+                or asset.get("path")
+                or asset.get("relative_path")
+            )
             if isinstance(candidate, str) and candidate:
-                paths.append(candidate)
+                paths.append(_absolutise(candidate, storage_root))
     if not paths:
         flat = raw.get("attached_images")
         if isinstance(flat, Sequence) and not isinstance(flat, (str, bytes)):
-            paths = [p for p in flat if isinstance(p, str) and p]
+            paths = [_absolutise(p, storage_root) for p in flat if isinstance(p, str) and p]
     # R5: ordered oldest -> newest by source order; keep the most recent 10.
-    return [normalize_path(p, long_prefix=long_path_prefix) for p in take(paths, MAX_IMAGES)]
+    keep = [p for p in take(paths, MAX_IMAGES) if p]
+    return [normalize_path(p, long_prefix=long_path_prefix) for p in keep]
+
+
+def _absolutise(path: str, storage_root: str | None) -> str:
+    """Absolute native path for an asset reference, never trusting a relative input."""
+    if not path:
+        return ""
+    if Path(path).is_absolute():
+        return normalize_path(path)
+    if not storage_root:
+        return normalize_path(path)
+    try:
+        return from_posix_relative(path, storage_root)
+    except PathOutOfScope:
+        return ""
 
 
 # --- claim / detail -------------------------------------------------------
@@ -250,12 +276,14 @@ def project_claimed_task(
     lease_ttl_default: int = 900,
     heartbeat_interval_default: int = 120,
     long_path_prefix: bool = False,
+    storage_root: str | None = None,
 ) -> dict:
     """Project a raw ``/internal/v1/claim`` body into ``ClaimedTaskProjection``.
 
-    ``now`` is accepted for signature stability (the caller owns the clock) and
-    is deliberately **not** read into the output: projections carry no
-    timestamps and must stay byte-stable for the same input (§8.7).
+    Pure: no I/O, no clock.  ``now`` is accepted for signature stability (the
+    caller owns the clock) and deliberately not read into the output --
+    projections carry no timestamps and stay byte-stable for the same input
+    (§8.7).
     """
     del now  # determinism: no clock, no counters, no hashes (R3)
 
@@ -280,7 +308,9 @@ def project_claimed_task(
             raw.get("heartbeat_interval_seconds"), 10, 3600, heartbeat_interval_default
         ),
         "definition_of_done": _project_dod(raw.get("definition_of_done")),
-        "attached_images": _image_paths(raw, long_path_prefix=long_path_prefix),
+        "attached_images": _image_paths(
+            raw, long_path_prefix=long_path_prefix, storage_root=storage_root
+        ),
     }
 
     rules = truncate(rules_source, RULES_LIMIT)
@@ -300,6 +330,7 @@ def project_task_detail(
     now: Any = None,
     *,
     long_path_prefix: bool = False,
+    storage_root: str | None = None,
 ) -> dict:
     """Project a raw ``/internal/v1/task`` body: claim minus lease, plus review data."""
     raw: Mapping[str, Any] = detail_dict or {}
@@ -317,7 +348,9 @@ def project_task_detail(
         "status": _project_status(raw.get("status"), "PENDING"),
         "local_repo_path": normalize_path(raw.get("local_repo_path"), long_prefix=long_path_prefix),
         "definition_of_done": _project_dod(raw.get("definition_of_done")),
-        "attached_images": _image_paths(raw, long_path_prefix=long_path_prefix),
+        "attached_images": _image_paths(
+            raw, long_path_prefix=long_path_prefix, storage_root=storage_root
+        ),
         "attempt_count": clamp_int(raw.get("attempt_count"), 0, 1_000_000, 0),
     }
 
@@ -342,25 +375,31 @@ def project_task_detail(
 def project_propose(raw: Mapping[str, Any] | None, now: Any = None) -> dict:
     del now
     body: Mapping[str, Any] = raw or {}
-    return {
-        "task_id": str(body.get("task_id") or ""),
-        "status": "PENDING_APPROVAL",
-        "ok": bool(body.get("ok", True)),
-    }
+    return enforce_ceiling(
+        {
+            "task_id": str(body.get("task_id") or ""),
+            "status": "PENDING_APPROVAL",
+            "ok": bool(body.get("ok", True)),
+        },
+        tool="propose_task",
+    )
 
 
 def project_submit(raw: Mapping[str, Any] | None, now: Any = None) -> dict:
     del now
     body: Mapping[str, Any] = raw or {}
-    return {
-        "ok": bool(body.get("ok", True)),
-        "status": str(body.get("status") or "IN_REVIEW"),
-        "dod_progress_percent": clamp_int(body.get("dod_progress_percent"), 0, 100, 0),
-    }
+    return enforce_ceiling(
+        {
+            "ok": bool(body.get("ok", True)),
+            "status": str(body.get("status") or "IN_REVIEW"),
+            "dod_progress_percent": clamp_int(body.get("dod_progress_percent"), 0, 100, 0),
+        },
+        tool="submit_for_review",
+    )
 
 
 def project_progress(raw: Mapping[str, Any] | None, now: Any = None) -> dict:
-    """Exactly ``{"ok": true}`` -- two keys, 12 bytes, no envelope (§7.4)."""
+    """Exactly ``{"ok": true}`` -- two keys, no envelope (§7.4)."""
     del raw, now
     return {"ok": True}
 
@@ -368,30 +407,39 @@ def project_progress(raw: Mapping[str, Any] | None, now: Any = None) -> dict:
 def project_heartbeat(raw: Mapping[str, Any] | None, now: Any = None) -> dict:
     del now
     body: Mapping[str, Any] = raw or {}
-    return {
-        "ok": bool(body.get("ok", True)),
-        "lease_expires_at": str(body.get("lease_expires_at") or ""),
-        "seconds_remaining": clamp_int(body.get("seconds_remaining"), 0, 86_400, 0),
-    }
+    return enforce_ceiling(
+        {
+            "ok": bool(body.get("ok", True)),
+            "lease_expires_at": str(body.get("lease_expires_at") or ""),
+            "seconds_remaining": clamp_int(body.get("seconds_remaining"), 0, 86_400, 0),
+        },
+        tool="task_heartbeat",
+    )
 
 
 def project_dod(raw: Mapping[str, Any] | None, now: Any = None) -> dict:
     del now
     body: Mapping[str, Any] = raw or {}
-    return {
-        "ok": bool(body.get("ok", True)),
-        "dod_progress_percent": clamp_int(body.get("dod_progress_percent"), 0, 100, 0),
-    }
+    return enforce_ceiling(
+        {
+            "ok": bool(body.get("ok", True)),
+            "dod_progress_percent": clamp_int(body.get("dod_progress_percent"), 0, 100, 0),
+        },
+        tool="update_dod_item",
+    )
 
 
 def project_subtask(raw: Mapping[str, Any] | None, now: Any = None) -> dict:
     del now
     body: Mapping[str, Any] = raw or {}
-    return {
-        "ok": bool(body.get("ok", True)),
-        "task_id": str(body.get("task_id") or ""),
-        "status": str(body.get("status") or "PENDING"),
-    }
+    return enforce_ceiling(
+        {
+            "ok": bool(body.get("ok", True)),
+            "task_id": str(body.get("task_id") or ""),
+            "status": str(body.get("status") or "PENDING"),
+        },
+        tool="spawn_subtask",
+    )
 
 
 #: Registry used by the tools to look up their projection by tool name.

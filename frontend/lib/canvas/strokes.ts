@@ -356,19 +356,18 @@ export function eraseStrokes(doc: CanvasDocument, ids: Iterable<string>): Delete
   return deleteStrokesCommand(doc, ids);
 }
 
-export function duplicateStrokes(
-  doc: CanvasDocument,
-  ids: Iterable<string>,
-  offset = { x: 16, y: 16 },
-): Stroke[] {
+/**
+ * §7.9 — `Cmd/Ctrl+D` duplicates with a `+16,+16` offset and **no** inherited
+ * label, because a duplicate must not claim an existing number.
+ */
+export function duplicateStrokes(doc: CanvasDocument, ids: string[], offset = { x: 16, y: 16 }): Stroke[] {
   const wanted = new Set(ids);
   return doc.strokes
     .filter((s) => wanted.has(s.id))
     .map((stroke) => {
-      const copy = translateStroke(stroke, offset.x, offset.y);
-      const { label: _label, ...rest } = copy;
-      void _label;
-      // §7.9 — a duplicate must not claim an existing number.
+      const moved = translateStroke(stroke, offset.x, offset.y) as Stroke;
+      const { label: _dropped, ...rest } = moved as Stroke & { label?: number };
+      void _dropped;
       return { ...rest, id: makeId() } as Stroke;
     });
 }

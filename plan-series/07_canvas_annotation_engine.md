@@ -1,4 +1,4 @@
-﻿# Doc 07 — In-App Canvas Annotation Engine
+# Doc 07 — In-App Canvas Annotation Engine
 
 > **Series position:** 07 of 10 · **Owner:** Subagent 7 (Canvas Specialist)
 > **Parent:** [`master_implementation_plan.md`](./master_implementation_plan.md) §3, §4.1, §6 item 6, §11

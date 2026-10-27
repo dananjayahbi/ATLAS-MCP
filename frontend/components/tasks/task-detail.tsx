@@ -1,6 +1,5 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { errorMessage } from "@/lib/api/errors";
@@ -18,20 +17,14 @@ import { useHotkeys } from "@/hooks/use-hotkeys";
 import type { AssetDTO } from "@/lib/types/enums";
 import { PageShell } from "@/components/hud/hud-frame";
 import { isImageAsset } from "@/components/tasks/attachment-chips";
-import { DodList } from "@/components/tasks/dod-list";
-import { MarkdownBlock } from "@/components/tasks/markdown-block";
+import { TaskDetailMain } from "@/components/tasks/task-detail-main";
 import { TaskDetailSidebar } from "@/components/tasks/task-detail-sidebar";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { PriorityChip, StatusBadge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { RadialGauge } from "@/components/ui/gauge";
-import { Panel } from "@/components/ui/panel";
 import { Skeleton } from "@/components/ui/skeleton";
 
-/** Doc 06 §7.2 / §10 — task detail: DoD, description, annotation canvas, terminal, review. */
-
-const AgentLogStream = dynamic(() => import("@/components/terminal/AgentLogStream"), { ssr: false });
+/** Doc 06 §7.2 / §10 — task detail composition. */
 
 export type TaskDetailProps = {
   taskId: string;
@@ -141,63 +134,15 @@ export function TaskDetail({ taskId, className }: TaskDetailProps) {
         ) : null}
 
         <div className="grid min-h-0 gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="flex min-h-0 flex-col gap-3">
-            <Panel panelId="dod" title="Definition of done" meta={`${task.dod_progress_percent}%`}>
-              <div className="flex items-start gap-3">
-                <RadialGauge value={task.dod_progress_percent} size={84} />
-                <div className="min-w-0 flex-1">
-                  <DodList
-                    items={task.definition_of_done}
-                    onToggle={
-                      task.status === "IN_REVIEW"
-                        ? (itemId, completed) => toggleDod.mutate({ id: task.id, itemId, completed })
-                        : undefined
-                    }
-                    pendingItemId={toggleDod.isPending ? (toggleDod.variables?.itemId ?? null) : null}
-                    disabled={toggleDod.isPending}
-                  />
-                  {task.status !== "IN_REVIEW" ? (
-                    <p className="mt-1 text-hud-micro uppercase tracking-[0.06em] text-disabled">
-                      Read-only here — the agent owns DoD via update_dod_item.
-                    </p>
-                  ) : null}
-                </div>
-              </div>
-            </Panel>
-
-            <Panel panelId="description" title="Description">
-              {task.description ? (
-                <MarkdownBlock source={task.description} />
-              ) : (
-                <p className="text-hud-body text-muted">No description.</p>
-              )}
-            </Panel>
-
-            <Panel
-              panelId="canvas"
-              title="Annotation canvas"
-              meta={imageAsset ? imageAsset.filename : "no image asset"}
-              actions={
-                imageAsset ? (
-                  <Button size="sm" onClick={() => setCanvasAsset(imageAsset)} title="Open canvas (O)">
-                    Open
-                  </Button>
-                ) : null
-              }
-            >
-              <p className="text-hud-body text-secondary">
-                {imageAsset
-                  ? "The canvas renders in the side pane with mode=review once the task is submitted."
-                  : "Attach an INPUT_SCREENSHOT to enable annotation."}
-              </p>
-            </Panel>
-
-            <Panel panelId="terminal" title="Live agent log" meta={task.assigned_agent_id ?? "—"} bodyClassName="pt-2">
-              <div className="h-72">
-                <AgentLogStream taskId={task.id} title={task.title} className="h-full" />
-              </div>
-            </Panel>
-          </div>
+          <TaskDetailMain
+            task={task}
+            onToggleDod={
+              task.status === "IN_REVIEW"
+                ? (itemId, completed) => toggleDod.mutate({ id: task.id, itemId, completed })
+                : undefined
+            }
+            pendingItemId={toggleDod.isPending ? (toggleDod.variables?.itemId ?? null) : null}
+          />
 
           <TaskDetailSidebar
             task={task}

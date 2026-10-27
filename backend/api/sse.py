@@ -1,4 +1,4 @@
-﻿"""SSE transport: two routes, one project channel + one task channel (Doc 09 §2).
+"""SSE transport: two routes, one project channel + one task channel (Doc 09 §2).
 
 Frames use the frozen §7.9 envelope, `seq` for `Last-Event-ID` replay, and a
 `stream.reset` control frame when the process boot id changed.

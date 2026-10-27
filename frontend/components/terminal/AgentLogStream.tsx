@@ -2,7 +2,7 @@
 
 // Doc 09 §10.1/§10.4 — the pane shell. Header, toolbar, windowed list, empty /
 // disconnected / reset states, autoscroll wiring, `role="log"` + `aria-live`.
-import { useCallback, useDeferredValue, useEffect, useMemo, useState, type RefCallback } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import type { LogLevel } from "@/lib/types/enums";
 import { copyLog } from "@/lib/sse/export";
 import { useTaskLogStream } from "@/lib/sse/hooks/use-task-log-stream";
@@ -12,6 +12,9 @@ import { TerminalToolbar } from "./TerminalToolbar";
 import { useAutoscroll } from "./use-autoscroll";
 import { ROW_H } from "./use-virtual-window";
 import { badgeButtonStyle, bannerStyle, footerStyle, headerStyle, panelStyle } from "./terminal-styles";
+
+/** Doc 09 §10.3 — toolbar query debounce. */
+export const QUERY_DEBOUNCE_MS = 150;
 
 /** Doc 09 §10.3 — the published component contract (frozen). */
 export interface AgentLogStreamProps {
@@ -40,17 +43,24 @@ export function AgentLogStream({
   const stream = useTaskLogStream(taskId);
   const [levels, setLevels] = useState<readonly LogLevel[]>(initialLevels);
   const [query, setQuery] = useState("");
+  // Doc 09 §10.3 — the parent debounces the search box by 150 ms.
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [copied, setCopied] = useState(false);
 
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), QUERY_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [query]);
+
   // `useDeferredValue` keeps typing responsive over 2 000 rows (Doc 09 §12).
-  const deferredQuery = useDeferredValue(query);
+  const deferredQuery = useDeferredValue(debouncedQuery);
   const filtered = useMemo(
     () => filterLines(stream.lines, levels, deferredQuery),
     [stream.lines, levels, deferredQuery],
   );
 
   const autoscroll = useAutoscroll({ lineCount: filtered.length });
-  const { setAtBottom, resume, scrollToBottom } = autoscroll;
+  const { scrollToBottom, resume } = autoscroll;
   const streamSetAtBottom = stream.setAtBottom;
   const streamResume = stream.resume;
 
@@ -78,13 +88,9 @@ export function AgentLogStream({
     jumpToLatest();
   }, [stream, jumpToLatest]);
 
-  // The viewport needs a ref callback rather than a ref object to share the element.
-  const attachRef: RefCallback<HTMLDivElement> = useCallback(
-    (element) => {
-      autoscroll.ref.current = element;
-    },
-    [autoscroll.ref],
-  );
+  const handleHome = useCallback(() => {
+    autoscroll.ref.current?.scrollTo({ top: 0 });
+  }, [autoscroll.ref]);
 
   const newCount = Math.max(stream.newCount, autoscroll.newCount);
   const shown = stream.lines.length;
@@ -110,7 +116,7 @@ export function AgentLogStream({
       </header>
 
       <TerminalToolbar
-        levels={levels as LogLevel[]}
+        levels={levels}
         onLevels={(next) => setLevels(next)}
         query={query}
         onQuery={setQuery}
@@ -128,20 +134,17 @@ export function AgentLogStream({
         </div>
       ) : null}
 
-      <LogViewport
-        lines={filtered}
-        highlight={deferredQuery}
-        showTs={showTs}
-        connected={stream.connected}
-        attachRef={attachRef}
-        onEnd={jumpToLatest}
-        onHome={() => {
-          autoscroll.ref.current?.scrollTo({ top: 0 });
-        }}
-        onLineClick={onLineClick}
-      />
-
-      <div style={{ position: "relative", height: 0 }}>
+      <div style={{ position: "relative", flex: "1 1 auto", minHeight: 0, display: "flex" }}>
+        <LogViewport
+          lines={filtered}
+          highlight={deferredQuery}
+          showTs={showTs}
+          connected={stream.connected}
+          ref={autoscroll.ref}
+          onEnd={jumpToLatest}
+          onHome={handleHome}
+          onLineClick={onLineClick}
+        />
         {newCount > 0 ? (
           <button type="button" onClick={jumpToLatest} style={badgeButtonStyle}>
             ▼ {newCount} new

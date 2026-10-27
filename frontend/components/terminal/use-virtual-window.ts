@@ -15,6 +15,8 @@ export interface VirtualWindowOptions {
   count: number;
   rowHeight?: number;
   overscan?: number;
+  /** externally owned element ref, shared with autoscroll */
+  ref?: React.RefObject<HTMLDivElement | null>;
 }
 
 export interface VirtualWindow {
@@ -37,13 +39,15 @@ export function useVirtualWindow({
   count,
   rowHeight = ROW_H,
   overscan = OVERSCAN,
+  ref,
 }: VirtualWindowOptions): VirtualWindow {
-  const ref = useRef<HTMLDivElement | null>(null);
+  const localRef = useRef<HTMLDivElement | null>(null);
+  const elementRef = ref ?? localRef;
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(VIEWPORT_ROWS * ROW_H);
 
   useEffect(() => {
-    const element = ref.current;
+    const element = elementRef.current;
     if (!element) return;
 
     const onScroll = (): void => setScrollTop(element.scrollTop);
@@ -82,16 +86,16 @@ export function useVirtualWindow({
 
   const scrollToIndex = useCallback(
     (index: number, behavior: ScrollBehavior = "auto") => {
-      const element = ref.current;
+      const element = elementRef.current;
       if (!element) return;
       const clamped = Math.max(0, Math.min(index, count - 1));
       element.scrollTo({ top: clamped * rowHeight, behavior });
     },
-    [count, rowHeight],
+    [count, rowHeight, elementRef],
   );
 
   return {
-    ref,
+    ref: elementRef,
     start,
     end,
     offsetY: start * rowHeight,

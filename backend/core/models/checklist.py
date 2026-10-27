@@ -1,4 +1,4 @@
-﻿"""`ChecklistItem` — Doc 01 §6.5."""
+"""`ChecklistItem` — Doc 01 §6.5."""
 
 from __future__ import annotations
 

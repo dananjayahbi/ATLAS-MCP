@@ -1,4 +1,4 @@
-﻿"""JSON renderer (Doc 01 §7.1).
+"""JSON renderer (Doc 01 §7.1).
 
 `contract_version` is **not** auto-stamped here. Doc 01 §7.1 says responses
 *may* include it, and only `ProjectDTO` (§7.2) actually shows it — so the

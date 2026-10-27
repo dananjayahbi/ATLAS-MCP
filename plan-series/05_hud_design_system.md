@@ -1,4 +1,4 @@
-﻿# Doc 05 — Tactical Cyber-HUD Design System
+# Doc 05 — Tactical Cyber-HUD Design System
 
 > **Series position:** 05 of 10 · **Owner:** Subagent 5 (Design Engineer)
 > **Parent:** [`master_implementation_plan.md`](./master_implementation_plan.md) §2 (Visual Design System & Command HUD Aesthetic), §6 items 7 & 10, §11 (documents table).

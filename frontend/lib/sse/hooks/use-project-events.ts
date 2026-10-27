@@ -62,6 +62,10 @@ export function useProjectEvents(slug: string, options: ProjectEventsOptions = {
 
   useEffect(() => {
     if (!slug) return;
+    // Switching project must not show another project's events.
+    store.clear();
+    setResetReason(null);
+
     const stream = createEventStream(endpoint ?? projectEventsUrl(slug), {
       onFrame(frame) {
         const data = frameJson(frame);

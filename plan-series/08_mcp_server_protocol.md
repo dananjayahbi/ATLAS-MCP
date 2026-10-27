@@ -1,4 +1,4 @@
-﻿# Doc 08 — FastMCP Protocol Server & Tool Contracts
+# Doc 08 — FastMCP Protocol Server & Tool Contracts
 
 > **Series position:** 08 of 10 · **Owner:** Subagent 8 (MCP Protocol Lead)
 > **Consumes:** Doc 01 §5 (paths), §6 (enums), §9 (tool contracts), §9.6 (projection limits), §9.7 (error surface), §10 (`/internal/v1`), §11.2 (lease constants), §13 (env), §14 (security), §15 (taxonomy); Doc 02 §8 (`StorageRouter`, `to_absolute`, `ensure_within_root`).

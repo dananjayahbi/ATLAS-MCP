@@ -106,9 +106,13 @@ export type PriorityMatrixPointDTO = {
   dod_progress_percent: number;
 };
 
+export type MatrixXAxis = "age_hours" | "dependency_weight";
+
 export type PriorityMatrixResponse = {
   points: PriorityMatrixPointDTO[];
-  axes: { x: "age_hours"; x_alternate: "dependency_weight"; y: "priority"; y_max: number };
+  // `x` reflects `?x=` on the request (Doc 06 §11.7): the alternate X axis is a
+  // real response value, not a client-side-only toggle.
+  axes: { x: MatrixXAxis; x_alternate: MatrixXAxis; y: "priority"; y_max: number };
 };
 
 export type TelemetrySummaryDTO = {

@@ -1,8 +1,8 @@
 "use client";
 
 // Doc 09 §10.4 T1/T11 — the windowed list body. Owns only the slice maths and the
-// scroll container; the shell owns state and the toolbar.
-import { useMemo, type KeyboardEvent, type RefCallback } from "react";
+// scroll container; the shell owns state, the toolbar, and the shared element ref.
+import { useMemo, type KeyboardEvent } from "react";
 import type { LogLevel } from "@/lib/types/enums";
 import type { TaskLogLine } from "@/lib/sse/types";
 import { LogLine } from "./LogLine";
@@ -13,12 +13,10 @@ import { emptyStyle, scrollStyle } from "./terminal-styles";
 export function matchesQuery(line: TaskLogLine, query: string): boolean {
   if (!query) return true;
   const needle = query.toLowerCase();
-  return (
-    line.message.toLowerCase().includes(needle) || line.level.toLowerCase().includes(needle)
-  );
+  return line.message.toLowerCase().includes(needle) || line.level.toLowerCase().includes(needle);
 }
 
-/** Level filter then text query — the two compose with AND and keep `seq` order (T5/T6). */
+/** Level filter then text query - the two compose with AND and keep `seq` order (T5/T6). */
 export function filterLines(
   lines: readonly TaskLogLine[],
   levels: readonly LogLevel[],
@@ -34,8 +32,8 @@ export interface LogViewportProps {
   highlight: string;
   showTs: boolean;
   connected: boolean;
-  /** set by the shell so autoscroll and windowing share one element */
-  attachRef: RefCallback<HTMLDivElement>;
+  /** shared with `useAutoscroll` - exactly one scroll container per pane */
+  ref: React.RefObject<HTMLDivElement | null>;
   onEnd(): void;
   onHome(): void;
   onLineClick?: (line: TaskLogLine) => void;
@@ -46,18 +44,12 @@ export function LogViewport({
   highlight,
   showTs,
   connected,
-  attachRef,
+  ref,
   onEnd,
   onHome,
   onLineClick,
 }: LogViewportProps) {
-  const virtual = useVirtualWindow({ count: lines.length });
-
-  // The shell owns the element ref; mirror it into the windowing hook.
-  const setRef = (element: HTMLDivElement | null): void => {
-    attachRef(element);
-    virtual.ref.current = element;
-  };
+  const virtual = useVirtualWindow({ count: lines.length, ref });
 
   const windowed = useMemo(
     () => lines.slice(virtual.start, virtual.end),
@@ -84,7 +76,7 @@ export function LogViewport({
 
   return (
     <div
-      ref={setRef}
+      ref={ref}
       tabIndex={0}
       role="log"
       aria-live="polite"
@@ -95,7 +87,7 @@ export function LogViewport({
     >
       {lines.length === 0 ? (
         <div style={emptyStyle}>
-          {connected ? "waiting for agent output…" : "orchestrator unreachable — reconnecting…"}
+          {connected ? "waiting for agent output..." : "orchestrator unreachable - reconnecting..."}
         </div>
       ) : (
         <div style={{ height: virtual.totalHeight, position: "relative" }}>

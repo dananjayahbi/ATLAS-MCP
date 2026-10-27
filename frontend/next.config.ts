@@ -1,21 +1,13 @@
-import type { NextConfig } from "next";
-
-const BACKEND = process.env.ATLAS_BACKEND_URL ?? "http://127.0.0.1:8000";
-const TOKEN = process.env.ATLAS_API_TOKEN ?? "dev-token";
+﻿import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  // The browser never sees ATLAS_API_TOKEN: the rewrite injects it server-side.
-  async rewrites() {
-    return [
-      {
-        source: "/api/v1/:path*",
-        destination: `${BACKEND}/api/v1/:path*`,
-        headers: [{ key: "Authorization", value: `Bearer ${TOKEN}` }],
-      },
-    ];
-  },
+  // No `rewrites()` here on purpose: a rewrite cannot attach the bearer token,
+  // and the token must be injected server-side (Doc 01 §14.2). The proxy lives
+  // in `app/api/v1/[...path]/route.ts`, which also streams SSE unbuffered.
+  poweredByHeader: false,
   experimental: {
+    // SSE connections outlive the default proxy window.
     proxyTimeout: 0,
   },
 };

@@ -1,4 +1,4 @@
-﻿# Doc 10 — End-to-End Verification & Acceptance Harness
+# Doc 10 — End-to-End Verification & Acceptance Harness
 
 > **Series position:** 10 of 10 · **Owner:** Subagent 10 (QA & Validation)
 > **Consumes:** Doc 01 §8 (T1–T12), §11 (I1–I6), §15 (errors), §16 (fixtures), §17 (traceability); Doc 02 §12 (D1–D8), §14; Doc 03 §7.3, §8, §9, §10; Doc 04 §9, §10; Doc 06 §15, §17; Doc 07 §15; Doc 09 §9, §15, §16.

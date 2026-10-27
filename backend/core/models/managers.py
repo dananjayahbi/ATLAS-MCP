@@ -1,4 +1,4 @@
-﻿"""`TaskQuerySet` helpers — claim filter + aggregate-friendly loaders (Doc 02 §5.6)."""
+"""`TaskQuerySet` helpers — claim filter + aggregate-friendly loaders (Doc 02 §5.6)."""
 
 from __future__ import annotations
 

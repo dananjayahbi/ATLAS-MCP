@@ -84,6 +84,7 @@ export const headerStyle: CSSProperties = {
 export const scrollStyle: CSSProperties = {
   position: "relative",
   flex: "1 1 auto",
+  width: "100%",
   minHeight: 0,
   overflowY: "auto",
   overflowX: "hidden",

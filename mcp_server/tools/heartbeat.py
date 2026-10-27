@@ -49,7 +49,7 @@ HEARTBEAT_RETURNS: dict = {
 
 
 class HeartbeatArgs(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
     task_id: Annotated[str, Field(min_length=1, max_length=64)]
     lease_id: Annotated[str, Field(pattern=LEASE_ID_PATTERN)]
@@ -72,11 +72,7 @@ def register(mcp: Any, cfg: Any, client: Any) -> None:
     handler = make_handler(cfg, client)
 
     def task_heartbeat(task_id: Any, lease_id: Any) -> str:
-        return invoke(
-            HeartbeatArgs,
-            payload(task_id=task_id, lease_id=lease_id),
-            handler,
-        )
+        return invoke(HeartbeatArgs, payload(task_id=task_id, lease_id=lease_id), handler)
 
     mcp.tool(name=NAME, description=DESCRIPTION, structured_output=False)(task_heartbeat)
     publish_frozen(mcp, name=NAME, description=DESCRIPTION, params=HEARTBEAT_PARAMS)

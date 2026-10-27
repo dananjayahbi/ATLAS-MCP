@@ -123,8 +123,17 @@ export function createRingBuffer<T>(options: RingBufferOptions<T> = {}): RingBuf
   };
 
   const append = (item: T): boolean => {
-    const control = isControl?.(item) ?? false;
+    // Identity dedupe first: a replayed overlap must not advance `lastSeq` either.
+    if (keys && keyOf) {
+      const key = keyOf(item);
+      if (key !== null && keys.has(key)) {
+        duplicates += 1;
+        return false;
+      }
+      if (key !== null) keys.add(key);
+    }
 
+    const control = isControl?.(item) ?? false;
     if (!control && seqOf) {
       const seq = seqOf(item);
       if (seq <= lastSeq) {
@@ -136,15 +145,6 @@ export function createRingBuffer<T>(options: RingBufferOptions<T> = {}): RingBuf
         options.onGap?.(lastSeq, seq);
       }
       lastSeq = seq;
-    }
-
-    if (keys && keyOf) {
-      const key = keyOf(item);
-      if (key !== null && keys.has(key)) {
-        duplicates += 1;
-        return false;
-      }
-      if (key !== null) keys.add(key);
     }
 
     items.push(item);

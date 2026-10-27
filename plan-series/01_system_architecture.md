@@ -1,4 +1,4 @@
-﻿# Doc 01 — System Architecture & Data Contracts
+# Doc 01 — System Architecture & Data Contracts
 
 > **Series position:** 01 of 10 · **Owner:** Subagent 1 (Lead Architect)
 > **Authority:** This document is the **single immutable source of truth** for every schema, identifier, path, port, and enum in ATLAS-MCP.

@@ -1,4 +1,4 @@
-﻿"""`TaskEvent` — Doc 01 §6.7.
+"""`TaskEvent` — Doc 01 §6.7.
 
 `seq` is monotonic **per project** and is the only ordering key used by SSE
 `Last-Event-ID` replay (Doc 01 §11.3).

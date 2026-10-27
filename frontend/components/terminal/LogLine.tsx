@@ -3,7 +3,6 @@
 // Doc 09 §10.4 — one log row (T9 timestamps, T10 wrapping, §14 level chip is text
 // not colour-only). ANSI-free by construction: the message arrives sanitised.
 import { memo, type KeyboardEvent, type MouseEvent } from "react";
-import type { LogLevel } from "@/lib/types/enums";
 import type { TaskLogLine } from "@/lib/sse/types";
 import { formatIso, formatTime } from "@/lib/sse/export";
 import { LEVEL_COLOR, LEVEL_WEIGHT } from "./terminal-styles";

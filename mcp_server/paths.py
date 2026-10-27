@@ -39,11 +39,40 @@ def normalize_path(raw: str | None, *, long_prefix: bool = False) -> str:
     return formatted
 
 
-def to_posix_relative(raw: str | None) -> str:
-    """Convert a native path to POSIX-relative form (DB storage convention)."""
+def to_posix_relative(raw: str | None, root: str | None = None) -> str:
+    """Convert a native path to POSIX-relative form (the DB storage convention).
+
+    With ``root``, the result is relative to that root; without it, only the
+    separators change.  Used to prove round-trip fidelity against
+    ``Doc 01 §5`` (``Asset.relative_path`` is always POSIX-relative).
+    """
     if not raw:
         return ""
-    return str(Path(raw)).replace(os.sep, "/")
+    path = Path(raw)
+    if root:
+        try:
+            path = path.resolve(strict=False).relative_to(Path(root).expanduser().resolve(strict=False))
+        except (ValueError, OSError):
+            return ""
+    return str(path).replace(os.sep, "/")
+
+
+def from_posix_relative(relative: str | None, root: str | None) -> str:
+    """Derive a native absolute path from a POSIX-relative DB path plus the root.
+
+    This mirrors Doc 02 §8.2 ``to_absolute``; the adapter is **not** the composer
+    (N3) and only uses this to repair a relative path Django should already have
+    absolutised (N1).  Containment is enforced on the derived result so a crafted
+    relative path cannot escape the root.
+    """
+    if not relative:
+        return ""
+    if Path(relative).is_absolute():
+        return normalize_path(relative)
+    if not root:
+        return normalize_path(relative)
+    joined = Path(root).expanduser() / relative.replace("/", os.sep)
+    return assert_within_root(str(joined), root)
 
 
 def is_within_root(candidate: str, root: str) -> bool:

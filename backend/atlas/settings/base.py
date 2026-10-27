@@ -1,4 +1,4 @@
-﻿"""Shared Django settings (Doc 01 §13, Doc 02 §3).
+"""Shared Django settings (Doc 01 §13, Doc 02 §3).
 
 DB tuning, app registry, and security posture live here. Dev/prod layer their
 own DEBUG/token policy on top.

@@ -1,4 +1,4 @@
-﻿"""Seed a realistic demo project so the HUD has something to render.
+"""Seed a realistic demo project so the HUD has something to render.
 
 Mirrors the fixture pack shapes from Doc 01 §16 but goes through the real
 service layer, so it also exercises scaffolding, events and audit writes.

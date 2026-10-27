@@ -1,4 +1,4 @@
-﻿# Doc 09 — Real-Time SSE Event & Terminal Stream
+# Doc 09 — Real-Time SSE Event & Terminal Stream
 
 > **Series position:** 09 of 10 · **Owner:** Subagent 9 (Streaming Specialist)
 > **Consumes:** Doc 01 §6.2 (enums), §6.7 (`TaskEvent`), §7.9 (SSE envelope), §11.3 (event sequencing), §12 (SSE routes), §13 (env), §15 (error taxonomy + degraded mode); Doc 02 §5.5 (`TaskEvent` model), §8.4 (`execution.log` append contract), §8.2 (`StorageRouter`), §11 (`audit.record`) · Doc 05 §11 (sound tokens) · Doc 06 (query-key factory)

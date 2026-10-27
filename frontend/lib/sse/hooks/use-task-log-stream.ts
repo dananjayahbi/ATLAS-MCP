@@ -78,6 +78,13 @@ export function useTaskLogStream(taskId: string, options: TaskLogStreamOptions =
 
   useEffect(() => {
     if (!taskId) return;
+    // A new task must not inherit the previous task's lines.
+    store.clear();
+    pendingRef.current = 0;
+    setNewCount(0);
+    setResetReason(null);
+    setGapCount(0);
+
     const stream = createEventStream(endpoint ?? taskLogUrl(taskId), {
       retryFloorMs,
       retryCeilMs,

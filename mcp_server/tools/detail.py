@@ -60,7 +60,7 @@ DETAIL_RETURNS: dict = {
 
 
 class TaskDetailsArgs(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
     task_id: Annotated[str, Field(min_length=1, max_length=64)]
 
@@ -68,7 +68,11 @@ class TaskDetailsArgs(BaseModel):
 def make_handler(cfg: Any, client: Any) -> Callable[[TaskDetailsArgs], dict]:
     def handler(args: TaskDetailsArgs) -> dict:
         raw = client.post(TASK_PATH, {"task_id": args.task_id}, retries=2, tool=NAME)
-        return project_task_detail(raw, long_path_prefix=cfg.long_path_prefix)
+        return project_task_detail(
+            raw,
+            long_path_prefix=cfg.long_path_prefix,
+            storage_root=cfg.storage_root,
+        )
 
     return handler
 

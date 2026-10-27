@@ -14,6 +14,8 @@ export interface AutoscrollOptions {
   enabled?: boolean;
   /** honour `prefers-reduced-motion` in the scroll call (Doc 09 §14) */
   smooth?: boolean;
+  /** externally owned element ref, shared with the virtual window */
+  ref?: React.RefObject<HTMLDivElement | null>;
 }
 
 export interface AutoscrollApi {
@@ -36,8 +38,14 @@ function prefersReducedMotion(): boolean {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-export function useAutoscroll({ lineCount, enabled = true, smooth = true }: AutoscrollOptions): AutoscrollApi {
-  const ref = useRef<HTMLDivElement | null>(null);
+export function useAutoscroll({
+  lineCount,
+  enabled = true,
+  smooth = true,
+  ref,
+}: AutoscrollOptions): AutoscrollApi {
+  const localRef = useRef<HTMLDivElement | null>(null);
+  const elementRef = ref ?? localRef;
   const [paused, setPaused] = useState(false);
   const [newCount, setNewCount] = useState(0);
 
@@ -45,22 +53,19 @@ export function useAutoscroll({ lineCount, enabled = true, smooth = true }: Auto
   const pendingRef = useRef(0);
   const seenRef = useRef(lineCount);
 
-  const setAtBottom = useCallback(
-    (atBottom: boolean) => {
-      if (pausedRef.current === !atBottom) return;
-      pausedRef.current = !atBottom;
-      setPaused(!atBottom);
-      if (atBottom) {
-        pendingRef.current = 0;
-        setNewCount(0);
-      }
-    },
-    [],
-  );
+  const setAtBottom = useCallback((atBottom: boolean) => {
+    if (pausedRef.current === !atBottom) return;
+    pausedRef.current = !atBottom;
+    setPaused(!atBottom);
+    if (atBottom) {
+      pendingRef.current = 0;
+      setNewCount(0);
+    }
+  }, []);
 
   const scrollToBottom = useCallback(
     (behavior?: ScrollBehavior) => {
-      const element = ref.current;
+      const element = elementRef.current;
       pausedRef.current = false;
       pendingRef.current = 0;
       setPaused(false);
@@ -70,7 +75,7 @@ export function useAutoscroll({ lineCount, enabled = true, smooth = true }: Auto
         behavior ?? (smooth && !prefersReducedMotion() ? "smooth" : "auto");
       element.scrollTo({ top: element.scrollHeight, behavior: mode });
     },
-    [smooth],
+    [smooth, elementRef],
   );
 
   const resume = useCallback(() => {
@@ -82,7 +87,7 @@ export function useAutoscroll({ lineCount, enabled = true, smooth = true }: Auto
 
   // Measure on scroll: cheap arithmetic, no observer needed (T3).
   useEffect(() => {
-    const element = ref.current;
+    const element = elementRef.current;
     if (!element) return;
     const measure = (): void => {
       const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
@@ -91,7 +96,7 @@ export function useAutoscroll({ lineCount, enabled = true, smooth = true }: Auto
     element.addEventListener("scroll", measure, { passive: true });
     measure();
     return () => element.removeEventListener("scroll", measure);
-  }, [setAtBottom]);
+  }, [setAtBottom, elementRef]);
 
   // New lines: follow when at bottom, otherwise accumulate the badge (T3).
   useEffect(() => {
@@ -99,16 +104,14 @@ export function useAutoscroll({ lineCount, enabled = true, smooth = true }: Auto
     seenRef.current = lineCount;
     if (!enabled || delta <= 0) return;
 
-    const element = ref.current;
+    const element = elementRef.current;
     if (pausedRef.current) {
       pendingRef.current += delta;
       setNewCount(pendingRef.current);
       return;
     }
-    if (element) {
-      element.scrollTop = element.scrollHeight;
-    }
-  }, [lineCount, enabled]);
+    if (element) element.scrollTop = element.scrollHeight;
+  }, [lineCount, enabled, elementRef]);
 
-  return { ref, paused, newCount, setAtBottom, scrollToBottom, resume };
+  return { ref: elementRef, paused, newCount, setAtBottom, scrollToBottom, resume };
 }

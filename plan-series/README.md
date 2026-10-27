@@ -1,4 +1,4 @@
-﻿# ATLAS-MCP — Plan Series Index
+# ATLAS-MCP — Plan Series Index
 
 > **Status:** Series v1.0.0 · authored 2026-10-27
 > **Parent specification:** [`master_implementation_plan.md`](./master_implementation_plan.md)

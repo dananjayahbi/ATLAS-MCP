@@ -1,4 +1,4 @@
-﻿"""Task service: transitions T1–T14 (Doc 01 §8).
+"""Task service: transitions T1–T14 (Doc 01 §8).
 
 Every function is a thin, testable wrapper that enforces one row of the guard
 table. HTTP views and MCP tools both call into here; neither re-implements a

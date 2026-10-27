@@ -1,4 +1,4 @@
-﻿"""`Asset` — Doc 01 §6.6."""
+"""`Asset` — Doc 01 §6.6."""
 
 from __future__ import annotations
 

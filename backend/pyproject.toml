@@ -1,4 +1,4 @@
-﻿[project]
+[project]
 name = "atlas-mcp-backend"
 version = "1.0.0"
 description = "ATLAS-MCP Django backend: domain core, REST API, SSE transport"

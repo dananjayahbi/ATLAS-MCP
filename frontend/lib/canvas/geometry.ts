@@ -383,15 +383,40 @@ export function resizeRectByHandle(
   }
 
   if (mods.shiftKey && isCorner(handle)) {
-    const w = Math.abs(x1 - x0);
-    const h = Math.abs(y1 - y0);
-    const side = Math.max(w, h);
-    const sx = x1 < x0 ? -1 : 1;
-    const sy = y1 < y0 ? -1 : 1;
-    if (handle.includes("w")) x0 = x1 - side * sx;
-    if (handle.includes("e")) x1 = x0 + side * sx;
-    if (handle.includes("n")) y0 = y1 - side * sy;
-    if (handle.includes("s")) y1 = y0 + side * sy;
+    // §4.1 — Shift preserves the *original* aspect ratio on corners (unlike
+    // §4.2's drag-to-create square). The anchor is the opposite corner unless
+    // Alt is holding the centre.
+    const aspect = initial.h > 0 ? initial.w / initial.h : 1;
+    const absW = Math.abs(x1 - x0);
+    const absH = Math.abs(y1 - y0);
+    const driveWidth = initial.w > 0 ? absW / initial.w >= absH / Math.max(initial.h, 1e-6) : true;
+    const w = Math.max(1, driveWidth ? absW : absH * aspect);
+    const h = Math.max(1, driveWidth ? absW / aspect : absH);
+    if (mods.altKey) {
+      const cx = (x0 + x1) / 2;
+      const cy = (y0 + y1) / 2;
+      x0 = cx - w / 2;
+      x1 = cx + w / 2;
+      y0 = cy - h / 2;
+      y1 = cy + h / 2;
+    } else {
+      const anchorX = handle.includes("w") ? initial.x + initial.w : initial.x;
+      const anchorY = handle.includes("n") ? initial.y + initial.h : initial.y;
+      if (handle.includes("w")) {
+        x0 = anchorX - w;
+        x1 = anchorX;
+      } else {
+        x0 = anchorX;
+        x1 = anchorX + w;
+      }
+      if (handle.includes("n")) {
+        y0 = anchorY - h;
+        y1 = anchorY;
+      } else {
+        y0 = anchorY;
+        y1 = anchorY + h;
+      }
+    }
   }
 
   return normaliseRect({ x: x0, y: y0 }, { x: x1, y: y1 });

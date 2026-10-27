@@ -11,13 +11,16 @@ export function MatrixLegend({ note }: { note?: string }) {
         </span>
       ))}
       <span className="inline-flex items-center gap-1">
-        <span aria-hidden className="size-2 rounded-full border border-critical" />blocked
+        <span aria-hidden className="size-2 rounded-full border border-critical" />
+        blocked
       </span>
       <span className="inline-flex items-center gap-1">
-        <span aria-hidden className="size-2 rounded-full border border-dashed border-flow" />discovered
+        <span aria-hidden className="size-2 rounded-full border border-dashed border-flow" />
+        discovered
       </span>
       <span className="ml-auto inline-flex items-center gap-1">
-        <span aria-hidden>◍</span>size = DoD
+        <span aria-hidden>◍</span>
+        size = DoD
       </span>
       {note ? <span className="text-disabled">{note}</span> : null}
     </div>

@@ -33,19 +33,20 @@ export type { RingBuffer, RingBufferOptions, RingBufferSnapshot } from "./ring-b
 
 export {
   backoffDelay,
-  createEventStream,
   frameReason,
   isMockMode,
   projectEventsUrl,
   taskLogUrl,
   withResumeCursor,
-} from "./client";
+} from "./backoff";
+export { createEventStream } from "./client";
 export type { EventStream, EventStreamOptions } from "./client";
 
-export { eventSourceTransport, NAMED_EVENTS } from "./transport";
+export { NAMED_EVENTS, eventSourceTransport, frameFromData } from "./transport";
+export type { Transport, TransportFactory, TransportHandlers } from "./transport";
 export { MOCK_FRAME_INTERVAL_MS, createMockTransportFactory, replayFixture } from "./mock-transport";
 
-export { MAX_MESSAGE, clampMessage, sanitiseMessage, sanitiseText } from "./sanitise";
+export { MAX_MESSAGE, clampMessage, sanitiseForExport, sanitiseMessage, sanitiseText } from "./sanitise";
 export {
   buildLogBlob,
   buildLogText,
@@ -57,9 +58,15 @@ export {
   toLogText,
 } from "./export";
 
-export { createLineStore, toTaskLogLine } from "./line-store";
+export { EMPTY_LINE_SNAPSHOT, EMPTY_LINES, createLineStore, toTaskLogLine } from "./line-store";
 export type { LineStore, LineStoreOptions } from "./line-store";
-export { createEventStore, invalidationKeys, isTaskEvent } from "./project-store";
+export {
+  EMPTY_EVENT_SNAPSHOT,
+  EMPTY_EVENTS,
+  createEventStore,
+  invalidationKeys,
+  isTaskEvent,
+} from "./project-store";
 export type { QueryKey } from "./project-store";
 
 export { useTaskLogStream } from "./hooks/use-task-log-stream";

@@ -52,7 +52,7 @@ SUBTASK_RETURNS: dict = {
 
 
 class SpawnSubtaskArgs(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
     parent_task_id: Annotated[str, Field(min_length=1, max_length=64)]
     title: Annotated[str, Field(min_length=1, max_length=200)]

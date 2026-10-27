@@ -49,7 +49,7 @@ DOD_RETURNS: dict = {
 
 
 class DodArgs(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
     task_id: Annotated[str, Field(min_length=1, max_length=64)]
     item_id: Annotated[int, Field(ge=1, le=100_000)]

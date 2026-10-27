@@ -3,7 +3,7 @@
 // Doc 09 §10.2/§10.3 — search, copy/export/clear, `N new` badge, connection dot.
 // Fully controlled; the parent owns the 150 ms debounce.
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { chipStyle, searchStyle, toolbarStyle } from "./terminal-styles";
+import { chipStyle, searchStyle } from "./terminal-styles";
 
 export interface ToolbarActionsProps {
   query: string;
