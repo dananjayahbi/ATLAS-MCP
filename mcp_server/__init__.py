@@ -1,13 +1,15 @@
-"""ATLAS MCP protocol adapter.
+"""ATLAS-MCP MCP server (Doc 08).
 
-A stateless, thin adapter that turns agent MCP tool calls into
-``POST /internal/v1/*`` requests against the Django core and projects the
-response down to the smallest JSON that still lets an agent write code
-(Doc 08 §1.1).  Nothing here imports Django, touches ``storage/``, or writes a
-byte to stdout outside the MCP framing.
+Exports the package version and the frozen wire contract version only; all
+transport wiring lives in `mcp_server.server` so importing this package stays
+side-effect free.
 """
 
-__version__ = "0.1.0"
-CONTRACT_VERSION = "1.0.0"
+from __future__ import annotations
 
 __all__ = ["__version__", "CONTRACT_VERSION"]
+
+__version__ = "0.1.0"
+
+#: Mirrors Doc 01 §1.2; every tool response is validated against it.
+CONTRACT_VERSION = "1.0.0"

@@ -126,11 +126,12 @@ export function TopBar({
       <ConnectionIndicator state={streamState} />
 
       <time
-        dateTime={now.toISOString()}
-        title={now.toISOString()}
+        dateTime={now?.toISOString() ?? ""}
+        title={now?.toISOString() ?? "Local time"}
+        suppressHydrationWarning
         className="hidden shrink-0 font-machine text-machine-sm tabular-nums text-secondary sm:block"
       >
-        {formatClock(now)}
+        {now ? formatClock(now) : "--:--:--"}
       </time>
 
       <Link

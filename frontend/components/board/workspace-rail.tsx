@@ -80,7 +80,7 @@ function RailCard({
           label={`${project.slug} health`}
         />
 
-        <MachineText truncate="middle" dim className="text-hud-micro" copyable>
+        <MachineText truncate="middle" dim className="text-hud-micro">
           {middlePath(project.local_repo_path, 26)}
         </MachineText>
 

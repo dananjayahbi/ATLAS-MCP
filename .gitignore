@@ -1,4 +1,4 @@
-﻿backend/data/
+backend/data/
 backend/*.sqlite3
 storage/
 .venv/
@@ -14,3 +14,7 @@ frontend/playwright-report/
 .env.local
 *.log
 .DS_Store
+
+frontend/.env.local
+
+frontend/e2e/.auth/

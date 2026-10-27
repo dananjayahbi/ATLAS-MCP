@@ -73,7 +73,10 @@ async function proxy(request: NextRequest, path: string[]): Promise<Response> {
       headers: forwardRequestHeaders(request),
       body,
       cache: "no-store",
-      redirect: "manual",
+      // Resolve Django's APPEND_SLASH redirect **here**, not in the browser.
+      // Passing a 301 through would bounce against Next's own trailing-slash
+      // 308 and loop forever (`/api/v1/projects` -> `/projects/` -> `/projects`).
+      redirect: "follow",
     });
   } catch {
     return backendUnavailable();

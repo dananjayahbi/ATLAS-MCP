@@ -1,13 +1,19 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 
-/** 1 s ticker for the command-bar clock (Doc 06 §5.2). Local time, UTC in `title`. */
-
-export function useClock(intervalMs = 1000): Date {
-  const [now, setNow] = useState<Date>(() => new Date());
+/**
+ * 1 s ticker for the command-bar clock (Doc 06 §5.2).
+ *
+ * Hydration-safe: the server has no wall clock that matches the client, so the
+ * first render returns `null` and the value only appears after mount. Callers
+ * render a stable placeholder for that frame instead of a mismatched time.
+ */
+export function useClock(intervalMs = 1000): Date | null {
+  const [now, setNow] = useState<Date | null>(null);
 
   useEffect(() => {
+    setNow(new Date());
     const timer = window.setInterval(() => setNow(new Date()), intervalMs);
     return () => window.clearInterval(timer);
   }, [intervalMs]);
@@ -25,7 +31,10 @@ export function useCountdown(seconds: number | null): number | null {
 
   useEffect(() => {
     if (value === null || value <= 0) return;
-    const timer = window.setInterval(() => setValue((current) => (current === null ? null : Math.max(0, current - 1))), 1000);
+    const timer = window.setInterval(
+      () => setValue((current) => (current === null ? null : Math.max(0, current - 1))),
+      1000,
+    );
     return () => window.clearInterval(timer);
   }, [value]);
 
