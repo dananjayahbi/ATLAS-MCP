@@ -10,9 +10,10 @@ export type BoardFilter = {
   blocked: boolean | null;
   discovered: boolean | null;
   priorityMin: number | null;
+  sort: "priority" | "created" | "updated" | null;
+  order: "asc" | "desc" | null;
   view: "board" | "list" | "matrix";
   group: "status" | "priority";
-  sort: string;
 };
 
 export function filterKey(filter: Partial<BoardFilter>): string {
@@ -30,9 +31,10 @@ export const DEFAULT_BOARD_FILTER: BoardFilter = {
   blocked: null,
   discovered: null,
   priorityMin: null,
+  sort: "priority",
+  order: "desc",
   view: "board",
   group: "status",
-  sort: "priority:desc",
 };
 
 export const qk = {

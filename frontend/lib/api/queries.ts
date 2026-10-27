@@ -58,6 +58,8 @@ export function useTasks(
           blocked: filter.blocked ?? null,
           discovered: filter.discovered ?? null,
           priorityMin: filter.priorityMin ?? null,
+          sort: filter.sort ?? null,
+          order: filter.order ?? null,
         },
         signal,
       ),
@@ -123,4 +125,5 @@ export function usePriorityMatrix(
 
 /** Mutations live in ./mutations; re-exported here so call sites import one module. */
 export * from "./mutations";
+
 

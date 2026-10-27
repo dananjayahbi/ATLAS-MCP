@@ -52,7 +52,7 @@ def sniff_mime(head: bytes, declared: str | None, filename: str) -> str:
 
 
 class AssetUploadView(AtlasAPIView):
-    throttle_family = "assets"
+    throttle_family = "upload"
 
     def post(self, request):
         upload = request.FILES.get("file")

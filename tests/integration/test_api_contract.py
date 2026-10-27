@@ -55,6 +55,54 @@ def test_healthz_is_public(client, project):
 
 
 # ---------------------------------------------------------------------------
+# throttling (Doc 04 §3.4, Doc 06 §11.4)
+# ---------------------------------------------------------------------------
+def test_throttle_rejection_is_429_with_retry_after(client, project, settings):
+    """A burst must surface as `RATE_LIMITED`/429, never INTERNAL_ERROR/500.
+
+    Doc 06 §11.4 retries `RATE_LIMITED` once after `Retry-After`; a 500 would
+    instead select the `INTERNAL_ERROR` path and read as a backend fault.
+    """
+    from api.common.throttle import throttles
+
+    throttle = throttles["read"]
+    throttle.reset()
+    try:
+        for _ in range(throttle.limit):
+            assert _get(client, "/api/v1/projects/").status_code == 200
+
+        response = _get(client, "/api/v1/projects/")
+        assert response.status_code == 429
+        body = response.json()
+        assert body["error"]["code"] == "RATE_LIMITED"
+        assert body["error"]["retryable"] is True
+        assert body["error"]["detail"]["limit"] == throttle.limit
+        assert int(response["Retry-After"]) >= 1
+    finally:
+        throttle.reset()
+
+
+def test_mutations_are_not_throttled(client, project, task):
+    """Doc 04 §3.4 budgets `/api/v1` **GETs**; a bulk action must not starve."""
+    from api.common.throttle import throttles
+
+    throttle = throttles["read"]
+    throttle.reset()
+    original = throttle.limit
+    throttle.limit = 1
+    try:
+        assert _get(client, "/api/v1/projects/").status_code == 200
+        assert _get(client, "/api/v1/projects/").status_code == 429
+
+        response = _patch(client, f"/api/v1/tasks/{task.pk}/", {"priority": 40})
+        assert response.status_code == 200
+        assert response.json()["priority"] == 40
+    finally:
+        throttle.limit = original
+        throttle.reset()
+
+
+# ---------------------------------------------------------------------------
 # projects
 # ---------------------------------------------------------------------------
 def test_list_projects_matches_dto(client, project):

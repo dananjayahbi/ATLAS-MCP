@@ -56,8 +56,18 @@ function backendUnavailable(): Response {
   );
 }
 
-async function proxy(request: NextRequest, path: string[]): Promise<Response> {
-  const target = `${BACKEND}/api/v1/${path.map(encodeURIComponent).join("/")}${request.nextUrl.search}`;
+function proxySubPath(request: NextRequest, segments: string[]): string {
+  // Prefer the raw pathname: a catch-all segment array loses the trailing slash,
+  // and Django cannot APPEND_SLASH a POST body (it raises RuntimeError → 500).
+  const match = /^\/api\/v1(\/.*)?$/.exec(request.nextUrl.pathname);
+  const raw = match?.[1];
+  if (raw && raw.length > 1) return raw;
+  return `/${segments.join("/")}${segments.length > 0 ? "/" : ""}`;
+}
+
+async function proxy(request: NextRequest, segments: string[]): Promise<Response> {
+  const subPath = proxySubPath(request, segments);
+  const target = `${BACKEND}/api/v1${subPath}${request.nextUrl.search}`;
 
   const mayHaveBody = request.method !== "GET" && request.method !== "HEAD";
   let body: ArrayBuffer | undefined;
@@ -100,7 +110,6 @@ async function handle(request: NextRequest, context: RouteContext): Promise<Resp
   const { path } = await context.params;
   return proxy(request, path);
 }
-
 export async function GET(request: NextRequest, context: RouteContext) {
   return handle(request, context);
 }

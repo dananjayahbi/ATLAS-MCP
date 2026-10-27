@@ -91,10 +91,11 @@ export function useProjectEvents(slug: string, options: ProjectEventsOptions = {
         setResetReason(reason);
         store.clear();
         scheduleInvalidation(queryClient, [
-          ["tasks", slug],
+          ["tasks"],
           ["discoveries"],
           ["reviews"],
           ["telemetry"],
+          ["projects"],
         ]);
       },
       onStateChange(state) {

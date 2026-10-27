@@ -11,6 +11,8 @@ export type TaskListQuery = {
   blocked?: boolean | null;
   discovered?: boolean | null;
   priorityMin?: number | null;
+  sort?: "priority" | "created" | "updated" | null;
+  order?: "asc" | "desc" | null;
   cursor?: string | null;
   limit?: number | null;
 };
@@ -23,6 +25,8 @@ function toParams(query: TaskListQuery): Record<string, string | number | boolea
     blocked: query.blocked,
     discovered: query.discovered,
     priority_min: query.priorityMin,
+    sort: query.sort,
+    order: query.order,
     cursor: query.cursor,
     limit: query.limit,
   };
@@ -32,7 +36,10 @@ export type TaskCreateBody = {
   title: string;
   description: string;
   priority?: number;
+  /** Doc 04 §5.2 — the view accepts `dod_items` and persists it as the checklist. */
+  dod_items?: string[];
   blocked_by?: string[];
+  parent_task_id?: string | null;
 };
 
 export const tasksApi = {

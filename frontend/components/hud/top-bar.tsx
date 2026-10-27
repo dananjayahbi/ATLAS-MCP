@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { cn } from "@/lib/format/cn";
 import { Badge } from "@/components/ui/badge";
 import { Kbd, modKey } from "@/components/ui/kbd";
 import { formatClock } from "@/lib/format/duration";
 import { useClock } from "@/hooks/use-clock";
+import { useLastProject } from "@/hooks/use-last-project";
 import type { TelemetrySummaryDTO } from "@/lib/types/api";
+import { CreateProjectDialog } from "@/components/projects/create-project-dialog";
 import { ConnectionIndicator, type ConnectionState } from "./connection-indicator";
 import { ProjectSwitcher } from "./project-switcher";
 
@@ -58,6 +60,11 @@ export function TopBar({
   const now = useClock();
   const pathname = usePathname();
   const router = useRouter();
+  const [createOpen, setCreateOpen] = useState(false);
+  // Doc 06 §5.2 — the Dashboard link returns to the last project dashboard, so
+  // the operator never has to re-navigate through the command center.
+  const lastSlug = useLastProject(activeSlug ?? projects[0]?.slug ?? null);
+  const dashboardHref = lastSlug ? `/projects/${lastSlug}` : "/";
   const nav = useMemo(
     () => [
       { href: "/", label: "Command", match: (p: string) => p === "/" },
@@ -66,6 +73,7 @@ export function TopBar({
     ],
     [],
   );
+  const onDashboard = Boolean(lastSlug) && (pathname ?? "").startsWith(`/projects/${lastSlug}`);
 
   return (
     <div className={cn("flex h-10 items-center gap-3 px-3", className)}>
@@ -106,6 +114,32 @@ export function TopBar({
             </Link>
           );
         })}
+
+        <Link
+          href={dashboardHref}
+          aria-current={onDashboard ? "page" : undefined}
+          title={lastSlug ? `Dashboard for ${lastSlug}` : "Open the last project dashboard"}
+          className={cn(
+            "inline-flex shrink-0 items-center gap-1 rounded-chip border px-2 py-0.5 text-hud-micro uppercase tracking-[0.08em] transition-colors duration-100",
+            onDashboard
+              ? "border-flow/40 bg-flow-tint text-flow"
+              : "border-grid text-secondary hover:border-grid-strong hover:text-primary",
+          )}
+        >
+          <span aria-hidden>▦</span>
+          Dashboard
+          {lastSlug ? <span className="font-machine lowercase text-muted">{lastSlug}</span> : null}
+        </Link>
+
+        <button
+          type="button"
+          onClick={() => setCreateOpen(true)}
+          title="Create a project"
+          className="inline-flex shrink-0 items-center gap-1 rounded-chip border border-grid px-2 py-0.5 text-hud-micro uppercase tracking-[0.08em] text-secondary hover:border-grid-strong hover:text-primary"
+        >
+          <span aria-hidden>＋</span>
+          New
+        </button>
       </nav>
 
       <div className="min-w-0 flex-1" />
@@ -157,6 +191,8 @@ export function TopBar({
       <Badge tone="flow" className="hidden lg:inline-flex">
         v1.0.0
       </Badge>
+
+      <CreateProjectDialog open={createOpen} onClose={() => setCreateOpen(false)} />
     </div>
   );
 }

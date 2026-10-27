@@ -57,8 +57,14 @@ class Envelope:
         }
 
     def to_sse(self) -> str:
-        """Render as an SSE frame (Doc 01 §7.9)."""
+        """Render as an SSE frame (Doc 09 §5.3).
+
+        Control frames (`stream.*`, `error`) omit the `id:` line per §6.4 so the
+        client's resume cursor never advances on a transport-only frame.
+        """
         data = json.dumps(self.to_dto(), separators=(",", ":"), ensure_ascii=False)
+        if self.type.startswith("stream.") or self.type == "error":
+            return f"event: {self.type}\ndata: {data}\n\n"
         return f"id: {self.id}\nevent: {self.type}\ndata: {data}\n\n"
 
 
@@ -209,17 +215,26 @@ def last_seq(project_id) -> int:
     )
 
 
-def reset_frame(project_slug: str) -> Envelope:
-    """Transport-only frame emitted on stream (re)connect after a boot change."""
+def reset_frame(project_slug: str, *, reason: str = "UNKNOWN_EVENT_ID", watermark: int | None = None) -> Envelope:
+    """Transport-only control frame (Doc 09 §6.4).
+
+    It is **not** a `core_taskevent` row: `id` is null, `seq` is 0, and `to_sse()`
+    omits the `id:` line so the resume cursor never advances. Only `UNKNOWN_EVENT_ID`
+    and `REPLAY_GAP` may reach a client that has no cursor — emitting it on every
+    fresh connect would leave the HUD permanently in degraded mode.
+    """
     return Envelope(
-        id=event_id(),
-        seq=last_seq_by_slug(project_slug),
+        id="",
+        seq=0,
         type="stream.reset",
-        level=LogLevel.INFO,
+        level=LogLevel.WARN,
         project_slug=project_slug,
         task_id=None,
-        message="stream reset; refetch authoritative state",
-        payload={"boot_id": getattr(settings, "ATLAS_BOOT_ID", "unknown")},
+        message=f"stream reset: {reason.lower().replace('_', ' ')}",
+        payload={
+            "reason": reason,
+            "watermark": last_seq_by_slug(project_slug) if watermark is None else watermark,
+        },
         ts=iso_z(None) or "",
     )
 

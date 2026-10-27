@@ -1,12 +1,13 @@
 "use client";
 
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
-import type { TaskDetailDTO, TaskSummaryDTO } from "@/lib/types/api";
+import type { DiscoveryDTO, ListResponse, ProjectDTO, TaskDetailDTO, TaskSummaryDTO } from "@/lib/types/api";
 import type { ApiError } from "./client";
 import { discoveriesApi } from "./discoveries";
 import { qk } from "./keys";
+import { projectsApi, type ProjectCreateBody } from "./projects";
 import { reviewsApi } from "./reviews";
-import { tasksApi } from "./tasks";
+import { tasksApi, type TaskCreateBody } from "./tasks";
 import type { MatrixXAxis } from "./telemetry";
 
 /**
@@ -131,8 +132,13 @@ export function useApproveDiscovery(): UseMutationResult<
   const queryClient = useQueryClient();
   return useMutation<TaskSummaryDTO, ApiError, { id: string; priority: number }, { previousIds?: string[] }>({
     mutationFn: ({ id, priority }) => discoveriesApi.approve(id, { priority }),
-    onMutate: async () => {
+    onMutate: async ({ id }) => {
       await queryClient.cancelQueries({ queryKey: qk.discoveries.root });
+      // 5 s dispatch delay means the row is already gone from the list; drop it
+      // from the cached page too so an invalidate cannot resurrect it.
+      queryClient.setQueriesData<ListResponse<DiscoveryDTO>>({ queryKey: qk.discoveries.root }, (previous) =>
+        previous ? { ...previous, items: previous.items.filter((row) => row.task_id !== id) } : previous,
+      );
       return {};
     },
     onSettled: () => {
@@ -151,8 +157,38 @@ export function useRejectDiscovery(): UseMutationResult<TaskSummaryDTO | null, A
       await discoveriesApi.reject(id, { reason: null });
       return null;
     },
+    onMutate: async ({ id }) => {
+      await queryClient.cancelQueries({ queryKey: qk.discoveries.root });
+      queryClient.setQueriesData<ListResponse<DiscoveryDTO>>({ queryKey: qk.discoveries.root }, (previous) =>
+        previous ? { ...previous, items: previous.items.filter((row) => row.task_id !== id) } : previous,
+      );
+      return {};
+    },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: qk.discoveries.root });
+      void queryClient.invalidateQueries({ queryKey: qk.telemetry.summary() });
+    },
+  });
+}
+
+export function useCreateTask(): UseMutationResult<TaskSummaryDTO, ApiError, { slug: string; body: TaskCreateBody }> {
+  const queryClient = useQueryClient();
+  return useMutation<TaskSummaryDTO, ApiError, { slug: string; body: TaskCreateBody }>({
+    mutationFn: ({ slug, body }) => tasksApi.create(slug, body),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.root });
+      void queryClient.invalidateQueries({ queryKey: qk.projects.root });
+      void queryClient.invalidateQueries({ queryKey: qk.telemetry.summary() });
+    },
+  });
+}
+
+export function useCreateProject(): UseMutationResult<ProjectDTO, ApiError, ProjectCreateBody> {
+  const queryClient = useQueryClient();
+  return useMutation<ProjectDTO, ApiError, ProjectCreateBody>({
+    mutationFn: (body) => projectsApi.create(body),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.projects.root });
       void queryClient.invalidateQueries({ queryKey: qk.telemetry.summary() });
     },
   });

@@ -24,7 +24,6 @@ class TaskListView(AtlasAPIView):
     def get(self, request, slug: str):
         project = task_service.get_project(slug)
         page_size = resolve_page_size(request.query_params.get("limit"))
-        status_filter = request.query_params.get("status")
         cursor = decode_cursor(request.query_params.get("cursor"))
 
         qs = (
@@ -39,24 +38,36 @@ class TaskListView(AtlasAPIView):
                 _child_count=Count("children", distinct=True),
             )
         )
-        if status_filter:
-            qs = qs.filter(status=status_filter)
+        qs = _apply_filters(qs, request.query_params)
+        sort_field, descending = _ordering(request.query_params)
 
+        cursor = decode_cursor(request.query_params.get("cursor"))
         if cursor:
-            from django.db.models import Q as DQ
-
-            created_at, obj_id = cursor
+            value, obj_id, cursor_field = cursor
+            # A cursor minted for another sort would resume at the wrong row.
+            if cursor_field and cursor_field != sort_field:
+                raise ValidationError(
+                    "cursor does not match sort",
+                    detail={"cursor_sort": cursor_field, "sort": sort_field},
+                )
+            lookup = f"{sort_field}__lt" if descending else f"{sort_field}__gt"
+            pk_lookup = "pk__lt" if descending else "pk__gt"
             qs = qs.filter(
-                DQ(created_at__gt=created_at)
-                | (DQ(created_at=created_at) & DQ(pk__gt=obj_id))
+                Q(**{lookup: value})
+                | (Q(**{sort_field: value}) & Q(**{pk_lookup: obj_id}))
             )
-        qs = qs.order_by("-priority", "created_at", "pk")
+
+        prefix = "-" if descending else ""
+        # `pk` breaks ties so the cursor resumes deterministically.
+        qs = qs.order_by(f"{prefix}{sort_field}", f"{prefix}pk")
 
         rows = list(qs[: page_size + 1])
         has_more = len(rows) > page_size
         rows = rows[:page_size]
         next_cursor = (
-            encode_cursor(rows[-1].created_at, rows[-1].pk) if has_more and rows else None
+            encode_cursor(getattr(rows[-1], sort_field), rows[-1].pk, sort_field)
+            if has_more and rows
+            else None
         )
         return Response(
             {
@@ -177,8 +188,66 @@ class TaskHistoryView(AtlasAPIView):
 
 
 # ---------------------------------------------------------------------------
-# helpers
+# list filters / ordering  (Doc 04 §5.2)
 # ---------------------------------------------------------------------------
+SORT_FIELDS = {
+    "priority": "priority",
+    "created": "created_at",
+    "updated": "updated_at",
+    "age": "created_at",
+}
+_TRUE = {"1", "true", "yes", "on"}
+
+
+def _flag(raw: str | None) -> bool | None:
+    if raw is None or raw == "":
+        return None
+    return raw.strip().lower() in _TRUE
+
+
+def _apply_filters(qs, params):
+    """`status` (repeatable or comma-joined), `q`, `agent`, `blocked`, `discovered`, `priority_min`."""
+    raw_status = params.getlist("status") if hasattr(params, "getlist") else []
+    raw_status = [part for value in raw_status for part in str(value).split(",") if part]
+    if raw_status:
+        qs = qs.filter(status__in=raw_status)
+
+    query = (params.get("q") or "").strip()
+    if query:
+        qs = qs.filter(Q(title__icontains=query) | Q(description__icontains=query))
+
+    agent = (params.get("agent") or "").strip()
+    if agent:
+        qs = qs.filter(assigned_agent_id=agent)
+
+    blocked = _flag(params.get("blocked"))
+    if blocked is True:
+        qs = qs.filter(blocked_by__isnull=False).distinct()
+    elif blocked is False:
+        qs = qs.filter(blocked_by__isnull=True)
+
+    discovered = _flag(params.get("discovered"))
+    if discovered is not None:
+        qs = qs.filter(is_agent_discovered=discovered)
+
+    priority_min = params.get("priority_min")
+    if priority_min not in (None, ""):
+        try:
+            qs = qs.filter(priority__gte=int(priority_min))
+        except (TypeError, ValueError):
+            raise ValidationError(
+                "priority_min must be an integer.", detail={"field": "priority_min"}
+            ) from None
+    return qs
+
+
+def _ordering(params) -> tuple[str, bool]:
+    """Return `(model_field, descending)`; defaults match Doc 04 §5.2."""
+    field = SORT_FIELDS.get(params.get("sort") or "priority", "priority")
+    descending = (params.get("order") or "desc").lower() != "asc"
+    return field, descending
+
+
 def _load_detail(task_id) -> Task:
     from django.shortcuts import get_object_or_404
 

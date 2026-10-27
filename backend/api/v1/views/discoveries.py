@@ -1,4 +1,10 @@
-"""Discovery triage routes (Doc 04 §5.6)."""
+"""Discovery triage routes (Doc 04 §5.6).
+
+Doc 04 §3.4 defines exactly three throttle families — `internal`, `upload`,
+`read` — so triage inherits the `read` budget from `AtlasAPIView` rather than
+inventing a fourth scope. Mutations on the human surface are unthrottled by
+design (see `api/v1/views/base.py`).
+"""
 
 from __future__ import annotations
 
@@ -13,8 +19,6 @@ from core.services import tasks as task_service
 
 
 class DiscoveryListView(AtlasAPIView):
-    throttle_family = "discoveries"
-
     def get(self, request):
         limit = resolve_page_size(request.query_params.get("limit"))
         slug = request.query_params.get("project_slug")
@@ -33,8 +37,6 @@ class DiscoveryListView(AtlasAPIView):
 
 
 class DiscoveryApproveView(AtlasAPIView):
-    throttle_family = "discoveries"
-
     def post(self, request, task_id: str):
         payload = body(request)
         priority = optional_int(payload, "priority")
@@ -43,11 +45,10 @@ class DiscoveryApproveView(AtlasAPIView):
 
 
 class DiscoveryRejectView(AtlasAPIView):
-    throttle_family = "discoveries"
-
     def post(self, request, task_id: str):
         payload = body(request)
-        task = task_service.reject_discovery(
-            task_id=task_id, note=optional_str(payload, "note", "")
-        )
+        # Doc 04 §5.6 names the field `reason`; `note` is accepted as an alias
+        # because the triage shelf shipped with it first.
+        note = optional_str(payload, "reason", optional_str(payload, "note", ""))
+        task = task_service.reject_discovery(task_id=task_id, note=note)
         return Response(serialize_discovery(task))

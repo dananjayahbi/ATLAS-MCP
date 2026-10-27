@@ -127,6 +127,54 @@ See `backend/core/leases.py` and Doc 01 §11.
 
 ---
 
+## Operator workflows
+
+The HUD is keyboard-first; every action below is reachable without a mouse.
+
+| Task | Where | Shortcut |
+| :--- | :--- | :--- |
+| Register a project | `＋ New` in the top bar, or `+ New project` in the rail | — |
+| Create a task | `New task` on a project board | `n` |
+| Search / filter tasks | Search bar above the board (debounced, URL-synced) | `/` |
+| Bulk reprioritise / requeue / archive | Select rows with the checkbox, then the bulk bar | `x` selects, `Esc` clears |
+| Triage discoveries | `/discoveries` — approve, edit priority, or dismiss | `j`/`k`, `a`, `e`, `Del`, `u` |
+| Sign off a review | `/reviews` — inspect the patch, then sign off | `⌘/Ctrl+Enter` |
+| Return to a dashboard | `▦ Dashboard` in the top bar (last project used) | — |
+| Keyboard map | `?` opens the cheat sheet | `?` |
+
+Board filters round-trip through the URL (`?q=`, `?status=`, `?agent=`,
+`?blocked=`, `?pmin=`, `?sort=`), so a filtered board is shareable and survives a
+reload. Search is debounced by 250 ms so typing never pushes a history entry per
+keystroke.
+
+**Bulk actions are sequential, never `Promise.all`.** Concurrent priority patches
+on one task race the `BEGIN IMMEDIATE` writer and produce spurious
+`STALE_LEASE`. The bar reports `n succeeded, m failed`. Approving a review in bulk
+is deliberately not offered — T8 is the only hard human gate.
+
+### Throttling
+
+Doc 04 §3.4 fixes three budgets, enforced per caller in
+`backend/api/common/throttle.py`:
+
+| Scope | Rate | Applies to |
+| :--- | :--- | :--- |
+| `read` | 600/min | `/api/v1` **GETs** |
+| `upload` | 20/min | `POST /assets/` |
+| `internal` | 120/min | `/internal/v1/*`, keyed by `X-ATLAS-Agent` |
+
+Human mutations (`POST`/`PATCH`/`DELETE` under `/api/v1`) are deliberately
+unthrottled: the surface is loopback single-operator, and metering writes would
+let a bulk action throttle itself part-way through its own row loop.
+
+A rejection is `RATE_LIMITED` → **429** with `Retry-After`. The HUD retries that
+once, honouring the header (`frontend/lib/api/client.ts`). Returning 500 here
+would misreport an ordinary burst as a backend fault and would select the
+`INTERNAL_ERROR` retry path instead — which is exactly the defect the
+`test_throttle_rejection_is_429_with_retry_after` regression test pins.
+
+---
+
 ## MCP tools
 
 | Tool | Kind | Purpose |
@@ -185,6 +233,12 @@ specs. Run it before every commit that touches both docs and code.
   per task.
 - **The browser never holds the token.** `/api/v1/*` is proxied by a Next.js
   route handler that injects `Authorization` server-side.
+- **`skipTrailingSlashRedirect` is mandatory.** Django's routes end in `/` and
+  Django cannot `APPEND_SLASH` a POST body, so the proxy forwards the raw
+  pathname. Turning this off makes every mutation answer `308` then `500`.
+- **`stream.reset` means "your cursor is unusable", not "welcome".** A fresh
+  client replays history; only an unresolvable `Last-Event-ID` or a replay gap
+  produces a reset. Emitting it on every connect pins the HUD in DEGRADED.
 - **Agents are token-constrained.** The claim projection carries no timestamps,
   no event history, no base64 — and is hard-capped at 16 384 bytes.
 

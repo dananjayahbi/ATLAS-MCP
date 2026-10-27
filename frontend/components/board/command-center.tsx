@@ -3,13 +3,16 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/format/cn";
-import { usePriorityMatrix, useReviews, useTasks, useTelemetry } from "@/lib/api/queries";
+import { usePriorityMatrix, useProjects, useReviews, useTasks, useTelemetry } from "@/lib/api/queries";
 import type { MatrixXAxis } from "@/lib/api/telemetry";
 import type { TaskSummaryDTO } from "@/lib/types/api";
 import { PageShell } from "@/components/hud/hud-frame";
 import { TelemetryStrip } from "@/components/hud/telemetry-strip";
 import { PriorityMatrix } from "@/components/matrix/priority-matrix";
+import { GlobalAgentActivityStream } from "@/components/board/global-agent-activity-stream";
 import { TaskCard } from "@/components/board/task-card";
+import { WorkspaceRail } from "@/components/board/workspace-rail";
+import { CreateProjectDialog } from "@/components/projects/create-project-dialog";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Panel } from "@/components/ui/panel";
@@ -21,7 +24,7 @@ export type CommandCenterProps = {
   className?: string;
 };
 
-function QueueStats({ tasks }: { tasks: readonly TaskSummaryDTO[] }) {
+function QueueStats({ tasks, loading }: { tasks: readonly TaskSummaryDTO[]; loading: boolean }) {
   const rows = useMemo(() => {
     const pending = tasks.filter((task) => task.status === "PENDING");
     const blocked = tasks.filter((task) => task.is_blocked);
@@ -32,6 +35,8 @@ function QueueStats({ tasks }: { tasks: readonly TaskSummaryDTO[] }) {
       { label: "DISCOVERED", value: discovered.length, tone: discovered.length ? "text-review-hot" : "text-secondary" },
     ];
   }, [tasks]);
+
+  if (loading && tasks.length === 0) return <Skeleton lines={3} />;
 
   return (
     <dl className="grid grid-cols-3 gap-1">
@@ -48,10 +53,17 @@ function QueueStats({ tasks }: { tasks: readonly TaskSummaryDTO[] }) {
 export function CommandCenterOverview({ className }: CommandCenterProps) {
   const telemetry = useTelemetry();
   const reviews = useReviews();
+  const projectsQuery = useProjects();
   const [xAxis, setXAxis] = useState<MatrixXAxis>("age_hours");
   const [selection, setSelection] = useState<Set<string>>(() => new Set());
+  const [createOpen, setCreateOpen] = useState(false);
   const matrix = usePriorityMatrix(xAxis);
-  const board = useTasks("alpha", {}, { kind: "board" });
+
+  const projects = projectsQuery.data?.items ?? [];
+  // The command center must never pin a hardcoded slug: the queue preview follows
+  // the first non-archived project, which is also what the telemetry strip shows.
+  const primary = projects.find((project) => project.archived_at === null)?.slug ?? projects[0]?.slug ?? "";
+  const board = useTasks(primary, {}, { kind: "board" });
 
   const tasks = board.data?.items ?? [];
   const reviewItems = reviews.data?.items ?? [];
@@ -62,6 +74,9 @@ export function CommandCenterOverview({ className }: CommandCenterProps) {
       subtitle="Multi-agent orchestration · telemetry, priority matrix and review queue"
       actions={
         <>
+          <Button size="sm" variant="primary" onClick={() => setCreateOpen(true)}>
+            New project
+          </Button>
           <Button size="sm" onClick={() => reviews.refetch()}>
             Refresh
           </Button>
@@ -78,56 +93,68 @@ export function CommandCenterOverview({ className }: CommandCenterProps) {
       <div className="flex min-h-0 flex-col gap-3">
         <TelemetryStrip telemetry={telemetry.data} />
 
-        <div className="grid min-h-0 gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-          <Panel
-            panelId="matrix"
-            title="Priority matrix"
-            meta={`${matrix.data?.points.length ?? 0} points`}
-            scanline
-            state={matrix.isLoading && !matrix.data ? "loading" : "idle"}
-            bodyClassName="pt-2"
-          >
-            <PriorityMatrix
-              data={matrix.data}
-              loading={matrix.isFetching}
-              xAxis={xAxis}
-              onXAxisChange={setXAxis}
-              selection={selection}
-              onSelectionChange={setSelection}
-              height={300}
-            />
-          </Panel>
+        <div className="grid min-h-0 gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
+          <WorkspaceRail
+            projects={projects}
+            loading={projectsQuery.isLoading}
+            onCreateProject={() => setCreateOpen(true)}
+          />
 
-          <div className="flex min-h-0 flex-col gap-3">
-            <Panel panelId="queue" title="Queue stats" meta={board.isFetching ? "syncing" : "live"}>
-              {board.isLoading && !board.data ? <Skeleton lines={3} /> : <QueueStats tasks={tasks} />}
-            </Panel>
-
+          <div className="grid min-h-0 gap-3 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
             <Panel
-              panelId="reviews"
-              title="Review queue"
-              meta={`${reviewItems.length} awaiting`}
-              state={reviews.isLoading && !reviews.data ? "loading" : "idle"}
+              panelId="matrix"
+              title="Priority matrix"
+              meta={`${matrix.data?.points.length ?? 0} points`}
+              scanline
+              state={matrix.isLoading && !matrix.data ? "loading" : "idle"}
+              bodyClassName="pt-2"
             >
-              {reviewItems.length === 0 ? (
-                <EmptyState inline title="Nothing awaiting sign-off" hint="Submitted work appears here." />
-              ) : (
-                <ul className="flex flex-col gap-1.5">
-                  {reviewItems.slice(0, 5).map((task) => (
-                    <li key={task.id}>
-                      <TaskCard
-                        task={task}
-                        compact
-                        href={`/projects/${task.project_slug}/tasks/${task.id}`}
-                      />
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <PriorityMatrix
+                data={matrix.data}
+                loading={matrix.isFetching}
+                xAxis={xAxis}
+                onXAxisChange={setXAxis}
+                selection={selection}
+                onSelectionChange={setSelection}
+                height={300}
+              />
             </Panel>
+
+            <div className="flex min-h-0 flex-col gap-3">
+              <Panel panelId="queue" title="Queue stats" meta={board.isFetching ? "syncing" : primary || "—"}>
+                <QueueStats tasks={tasks} loading={board.isLoading} />
+              </Panel>
+
+              <GlobalAgentActivityStream limit={8} className="min-h-0" />
+
+              <Panel
+                panelId="reviews"
+                title="Review queue"
+                meta={`${reviewItems.length} awaiting`}
+                state={reviews.isLoading && !reviews.data ? "loading" : "idle"}
+              >
+                {reviewItems.length === 0 ? (
+                  <EmptyState inline title="Nothing awaiting sign-off" hint="Submitted work appears here." />
+                ) : (
+                  <ul className="flex flex-col gap-1.5">
+                    {reviewItems.slice(0, 5).map((task) => (
+                      <li key={task.id}>
+                        <TaskCard
+                          task={task}
+                          compact
+                          href={`/projects/${task.project_slug}/tasks/${task.id}`}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Panel>
+            </div>
           </div>
         </div>
       </div>
+
+      <CreateProjectDialog open={createOpen} onClose={() => setCreateOpen(false)} />
     </PageShell>
   );
 }

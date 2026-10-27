@@ -75,8 +75,10 @@ export function useTriageShelf({ onApprove, onReject, onError, onDispatched }: T
         const run = kind === "approve" ? onApprove(discovery, priority) : onReject(discovery);
         void run
           .then(() => {
+            // Success: the task has left PENDING_APPROVAL, so it must stay hidden
+            // even if the refetch is slow or fails. Restoring it here is what made
+            // a successful triage look like it had never happened.
             onDispatched?.(discovery, kind);
-            restore(discovery.task_id);
           })
           .catch((error: unknown) => {
             onError(error instanceof Error ? error.message : "Triage action failed");

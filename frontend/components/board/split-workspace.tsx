@@ -40,7 +40,12 @@ export function SplitWorkspace({
   return (
     <section aria-label="Split workspace" className={cn("flex min-h-0 min-w-0 flex-col gap-1", className)}>
       {showControl && onLayoutChange ? (
-        <div className="flex shrink-0 items-center justify-end gap-1" aria-label="Split layout">
+        <div
+          role="group"
+          aria-label="Split layout"
+          className="flex shrink-0 items-center justify-end gap-1"
+        >
+
           {(Object.keys(LAYOUT_LABEL) as SplitLayout[]).map((option) => (
             <button
               key={option}

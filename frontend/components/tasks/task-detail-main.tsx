@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import type { TaskDetailDTO } from "@/lib/types/api";
 import { DodList } from "@/components/tasks/dod-list";
 import { MarkdownBlock } from "@/components/tasks/markdown-block";
+import { TaskTimeline } from "@/components/tasks/task-timeline";
 import { RadialGauge } from "@/components/ui/gauge";
 import { Panel } from "@/components/ui/panel";
 
@@ -45,6 +46,14 @@ export function TaskDetailMain({ task, onToggleDod, pendingItemId = null }: Task
         ) : (
           <p className="text-hud-body text-muted">No description.</p>
         )}
+      </Panel>
+
+      <Panel
+        panelId="history"
+        title="Event history"
+        meta={`${task.recent_events.length}`}
+      >
+        <TaskTimeline events={task.recent_events} limit={20} />
       </Panel>
 
       <Panel panelId="terminal" title="Live agent log" meta={task.assigned_agent_id ?? "—"} bodyClassName="pt-2">

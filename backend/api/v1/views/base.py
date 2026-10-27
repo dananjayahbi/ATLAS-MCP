@@ -11,16 +11,26 @@ from api.common.auth import require_agent_header, require_token
 from api.common.throttle import throttles
 from core.errors import ValidationError
 
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
 
 class AtlasAPIView(APIView):
     """Base class for every `/api/v1` route."""
 
-    throttle_family = "default"
+    #: Doc 04 §3.4 default. `assets` overrides to the `upload` family.
+    throttle_family = "read"
 
     def initial(self, request: Request, *args, **kwargs) -> None:
         super().initial(request, *args, **kwargs)
         require_token(request)
-        throttles[self.throttle_family].check(self._throttle_key(request))
+        # Doc 04 §3.4 defines a budget for `/api/v1` **GETs** and for uploads
+        # only; mutations on the human surface are loopback single-operator and
+        # deliberately unthrottled so a bulk action cannot starve itself.
+        if self.throttle_family and self._is_throttled(request):
+            throttles[self.throttle_family].check(self._throttle_key(request))
+
+    def _is_throttled(self, request: Request) -> bool:
+        return self.throttle_family != "read" or request.method in SAFE_METHODS
 
     def _throttle_key(self, request: Request) -> str:
         return request.headers.get("X-ATLAS-Agent") or "human"
@@ -29,10 +39,13 @@ class AtlasAPIView(APIView):
 class AtlasAgentView(APIView):
     """Base class for every `/internal/v1` route (Doc 01 §10)."""
 
+    throttle_family = "internal"
+
     def initial(self, request: Request, *args, **kwargs) -> None:
         super().initial(request, *args, **kwargs)
         require_token(request)
         request.agent_identifier = require_agent_header(request)
+        throttles[self.throttle_family].check(request.agent_identifier)
 
     def agent(self, request: Request) -> str:
         return getattr(request, "agent_identifier", "Agent-Unknown")

@@ -45,7 +45,10 @@ class ReviewApproveView(AtlasAPIView):
 class ReviewRejectView(AtlasAPIView):
     def post(self, request, task_id: str):
         payload = body(request)
-        task = task_service.reject_review(
-            task_id=task_id, note=optional_str(payload, "note", "")
+        # Doc 01 §7.4 names the field `review_notes`; `note` stays accepted for
+        # backward compatibility with the first MCP/probe implementations.
+        notes = optional_str(
+            payload, "review_notes", optional_str(payload, "note", "")
         )
+        task = task_service.reject_review(task_id=task_id, note=notes)
         return Response(serialize_task_detail(task))

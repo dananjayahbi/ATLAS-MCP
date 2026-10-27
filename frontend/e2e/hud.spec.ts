@@ -69,7 +69,7 @@ test.describe("board", () => {
 
   test("split workspace offers 1x1 through 2x3 layouts", async ({ page }) => {
     await page.goto("/projects/alpha");
-    const split = page.getByLabel("Split layout");
+    const split = page.getByRole("group", { name: "Split layout" });
     await expect(split).toBeVisible();
     for (const label of ["1×1", "1×2", "2×2", "2×3"]) {
       await expect(split.getByRole("button", { name: label })).toBeVisible();

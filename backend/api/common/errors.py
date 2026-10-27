@@ -30,7 +30,11 @@ def atlas_exception_handler(exc, context) -> Response | None:
     request = context.get("request")
 
     if isinstance(exc, AtlasError):
-        return Response(exc.to_envelope(_request_id(request)), status=exc.http_status)
+        return Response(
+            exc.to_envelope(_request_id(request)),
+            status=exc.http_status,
+            headers=exc.headers or None,
+        )
 
     if isinstance(exc, DrfValidationError):
         detail = getattr(exc, "detail", None)

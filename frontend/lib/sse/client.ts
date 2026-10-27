@@ -126,14 +126,25 @@ export function createEventStream(url: string, options: EventStreamOptions): Eve
 
     const handleControl = (name: string, data: string, id: string): void => {
       armStall();
-      if (id) lastEventId = id;
       const frame: SseFrame = frameFromData(data, name, id);
+
+      // Doc 09 §5.3: only `error`, `stream.reset` and `stream.reconnect` are
+      // control frames. Every task event is ALSO a named event (`event: task.log`),
+      // so an unrecognised name must be delivered as a normal frame. Treating it
+      // as `stream.reconnect` makes the client redial on every single event.
       if (name === "error" || name === "stream.reset") {
+        if (id) lastEventId = id;
         options.onReset(frameReason(frame) || name);
-      } else {
-        // `stream.reconnect` is a server rotation: drop and redial (§3.2 step 8).
-        scheduleReconnect();
+        return;
       }
+      if (name === "stream.reconnect") {
+        if (id) lastEventId = id;
+        scheduleReconnect();
+        return;
+      }
+
+      if (id) lastEventId = id;
+      options.onFrame(frame);
     };
 
     transport = transportFactory(withResumeCursor(url, lastEventId), {

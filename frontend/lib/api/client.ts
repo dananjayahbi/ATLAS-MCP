@@ -16,6 +16,8 @@ export class ApiError extends Error {
   readonly retryable: boolean;
   readonly detail: Record<string, unknown>;
   readonly requestId: string | null;
+  /** From `Retry-After` on a 429; `null` when the header was absent. */
+  readonly retryAfterMs: number | null;
 
   constructor(
     code: ApiErrorCode,
@@ -24,6 +26,7 @@ export class ApiError extends Error {
     retryable = false,
     detail: Record<string, unknown> = {},
     requestId: string | null = null,
+    retryAfterMs: number | null = null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -32,11 +35,20 @@ export class ApiError extends Error {
     this.retryable = retryable;
     this.detail = detail;
     this.requestId = requestId;
+    this.retryAfterMs = retryAfterMs;
   }
 
-  static fromEnvelope(body: ApiErrorBody, status: number): ApiError {
+  static fromEnvelope(body: ApiErrorBody, status: number, retryAfterMs: number | null = null): ApiError {
     const e = body.error;
-    return new ApiError(e.code as ApiErrorCode, status, e.message, e.retryable, e.detail ?? {}, e.request_id);
+    return new ApiError(
+      e.code as ApiErrorCode,
+      status,
+      e.message,
+      e.retryable,
+      e.detail ?? {},
+      e.request_id,
+      retryAfterMs,
+    );
   }
 
   /** 401/403 — the UI pauses queries and shows a sticky toast (Doc 06 §3.6). */
@@ -88,11 +100,25 @@ function makeSignal(outer?: AbortSignal): AbortSignal {
 }
 
 function shouldRetry(error: unknown, attempt: number, method: Method): boolean {
-  if (method !== "GET" || attempt >= RETRY_DELAYS_MS.length) return false;
+  if (attempt >= RETRY_DELAYS_MS.length) return false;
   if (error instanceof ApiError) {
+    // A 429 says "try once more in a moment", not "retry this write twice".
+    // Doc 06 §11.4: `RATE_LIMITED` → "auto retry once after `retry-after`".
+    if (error.code === "RATE_LIMITED") return attempt === 0;
+    if (method !== "GET") return false;
     return error.code === "BACKEND_UNAVAILABLE" || error.code === "NETWORK_ERROR" || error.code === "TIMEOUT";
   }
-  return true;
+  return method === "GET";
+}
+
+/** A throttled client waits exactly as long as the server asked, clamped. */
+const MAX_RETRY_AFTER_MS = 10_000;
+
+function retryDelayMs(error: unknown, attempt: number): number {
+  if (error instanceof ApiError && error.code === "RATE_LIMITED" && error.retryAfterMs !== null) {
+    return Math.min(error.retryAfterMs, MAX_RETRY_AFTER_MS);
+  }
+  return RETRY_DELAYS_MS[attempt];
 }
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -127,7 +153,7 @@ async function attempt<T>(path: string, options: RequestOptions, attemptIndex: n
   if (!res.ok) {
     const error = await decodeError(res);
     if (shouldRetry(error, attemptIndex, options.method)) {
-      await wait(RETRY_DELAYS_MS[attemptIndex]);
+      await wait(retryDelayMs(error, attemptIndex));
       return attempt<T>(path, options, attemptIndex + 1);
     }
     throw error;

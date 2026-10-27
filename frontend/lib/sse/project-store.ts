@@ -53,8 +53,9 @@ export function isTaskEvent(value: unknown): value is TaskEventDTO {
 export type QueryKey = readonly unknown[];
 
 /**
- * Doc 09 §11.4 invalidation map. Prefix keys are used for wildcards
- * (`['matrix', slug]` covers `['matrix', slug, *]`). An empty result means
+ * Doc 09 §11.4 invalidation map. Every key here is a **prefix** of the keys built
+ * by `lib/api/keys.ts` — TanStack matches by prefix, so `["tasks"]` covers
+ * `["tasks","board",slug,fk]` and `["tasks","detail",id]`. An empty result means
  * "store only" — never a refetch.
  */
 export function invalidationKeys(
@@ -62,17 +63,19 @@ export function invalidationKeys(
   slug: string,
   taskId: string | null,
 ): QueryKey[] {
-  const tasks: QueryKey = ["tasks", slug];
-  const task: QueryKey = taskId ? ["task", taskId] : ["task"];
+  // These must stay aligned with `qk` in `lib/api/keys.ts`.
+  const tasks: QueryKey = ["tasks"];
+  const task: QueryKey = taskId ? ["tasks", "detail", taskId] : ["tasks"];
   const telemetry: QueryKey = ["telemetry"];
-  const project: QueryKey = ["project", slug];
-  const matrix: QueryKey = ["matrix", slug];
+  const projects: QueryKey = ["projects"];
+  const project: QueryKey = ["projects", "detail", slug];
+  const matrix: QueryKey = ["telemetry", "matrix"];
   const discoveries: QueryKey = ["discoveries"];
   const reviews: QueryKey = ["reviews"];
 
   switch (type) {
     case "task.created":
-      return [tasks, telemetry, matrix, project];
+      return [tasks, telemetry, matrix, project, projects];
     case "task.updated":
       return [tasks, task];
     case "task.status_changed":
@@ -94,12 +97,12 @@ export function invalidationKeys(
     case "discovery.rejected":
       return [discoveries, tasks, telemetry];
     case "agent.connected":
-      return [["projects"]];
+      return [projects];
     case "system.boot":
       // Every query — the backend restarted (Doc 09 §13 F6).
       return [[]];
     case "system.recovery":
-      return [tasks, task, telemetry, ["projects"]];
+      return [tasks, task, telemetry, projects];
     case "telemetry.tick":
       return [telemetry];
     case "agent.heartbeat":

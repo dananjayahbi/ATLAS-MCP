@@ -31,6 +31,9 @@ export default defineConfig({
     video: "off",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  // Demo data is mutable (the triage tests consume it), so the suite seeds it and
+  // asserts against live state instead of a frozen fixture.
+  globalSetup: "./e2e/global-setup.ts",
   // The HUD proxies every request to Django, so a backend is mandatory. Both
   // servers are started here unless ATLAS_E2E_NO_SERVER says they already run
   // (that is what `start-atlas.bat` + `npm run test:e2e` does).

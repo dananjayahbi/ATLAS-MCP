@@ -20,10 +20,12 @@ class AtlasError(Exception):
         detail: dict[str, Any] | None = None,
         code: str | None = None,
         retryable: bool | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.detail = detail
+        self.headers = headers or {}
         if code is not None:
             self.code = code
         if retryable is not None:
@@ -107,6 +109,15 @@ class PayloadTooLarge(AtlasError):
 
 class UnsupportedMediaType(AtlasError):
     code = ErrorCode.UNSUPPORTED_MEDIA_TYPE
+
+
+class RateLimited(AtlasError):
+    code = ErrorCode.RATE_LIMITED
+    retryable = True
+
+    def __init__(self, message: str = "Too many requests; retry shortly.", **kwargs) -> None:
+        kwargs.setdefault("retryable", True)
+        super().__init__(message, **kwargs)
 
 
 class StorageWriteFailed(AtlasError):

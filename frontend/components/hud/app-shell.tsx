@@ -1,9 +1,11 @@
 "use client";
 
-import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { useProjects, useTelemetry } from "@/lib/api/queries";
+import { useProjectEvents } from "@/lib/sse";
 import type { ProjectDTO } from "@/lib/types/api";
+import { useActiveProjectSlug } from "@/hooks/use-active-project-slug";
+import { ActivityEventsProvider } from "./activity-events-context";
 import { HudFrame } from "./hud-frame";
 import { StatusRail } from "./status-rail";
 import { TopBar, deriveSystemStatus } from "./top-bar";
@@ -19,22 +21,24 @@ export type AppShellProps = {
   className?: string;
 };
 
-function streamStateFor(generatedAt: string | undefined, failed: boolean) {
+function streamStateFor(connected: boolean, failed: boolean) {
   if (failed) return "degraded" as const;
-  if (!generatedAt) return "connecting" as const;
-  return Date.now() - Date.parse(generatedAt) < 60_000 ? ("live" as const) : ("closed" as const);
+  return connected ? ("live" as const) : ("connecting" as const);
 }
 
 export function AppShell({ children, className }: AppShellProps) {
-  const pathname = usePathname() ?? "/";
   const projectsQuery = useProjects();
   const telemetryQuery = useTelemetry();
   const toggleRail = useShellStore((state) => state.toggleRail);
   const toggleCheatSheet = useShellStore((state) => state.toggleCheatSheet);
 
   const projects: ProjectDTO[] = projectsQuery.data?.items ?? [];
-  const activeSlug = projects.find((project) => pathname.includes(`/projects/${project.slug}`))?.slug ?? projects[0]?.slug ?? null;
-  const streamState = streamStateFor(telemetryQuery.data?.generated_at, telemetryQuery.isError && !telemetryQuery.data);
+  const activeSlug = useActiveProjectSlug();
+  // Doc 09 §11.1 — the single Channel A subscription for the whole shell. Every
+  // event patches the TanStack cache through `invalidationKeys`, so pages do not
+  // each open their own EventSource.
+  const events = useProjectEvents(activeSlug ?? "");
+  const streamState = streamStateFor(events.connected, Boolean(events.resetReason));
   const status = deriveSystemStatus(!projectsQuery.isError, telemetryQuery.data, streamState);
 
   return (
@@ -53,9 +57,11 @@ export function AppShell({ children, className }: AppShellProps) {
         />
       }
     >
-      <div id="main-content" className="h-full min-h-0">
-        {children}
-      </div>
+      <ActivityEventsProvider events={events.events}>
+        <div id="main-content" className="h-full min-h-0">
+          {children}
+        </div>
+      </ActivityEventsProvider>
     </HudFrame>
   );
 }

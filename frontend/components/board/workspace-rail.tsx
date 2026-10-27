@@ -19,6 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export type WorkspaceRailProps = {
   projects: readonly ProjectDTO[];
   loading?: boolean;
+  onCreateProject?: () => void;
   className?: string;
 };
 
@@ -127,7 +128,7 @@ function RailCard({
   );
 }
 
-export function WorkspaceRail({ projects, loading = false, className }: WorkspaceRailProps) {
+export function WorkspaceRail({ projects, loading = false, onCreateProject, className }: WorkspaceRailProps) {
   const pathname = usePathname() ?? "";
   const activeSlug = projects.find((project) => pathname.includes(`/projects/${project.slug}`))?.slug ?? null;
 
@@ -145,7 +146,9 @@ export function WorkspaceRail({ projects, loading = false, className }: Workspac
     return (
       <div className={cn("flex flex-col gap-1.5", className)}>
         <p className="text-hud-body text-muted">No projects registered yet.</p>
-        <Button size="sm">Create project</Button>
+        <Button size="sm" variant="primary" onClick={onCreateProject}>
+          Create project
+        </Button>
       </div>
     );
   }
@@ -170,6 +173,9 @@ export function WorkspaceRail({ projects, loading = false, className }: Workspac
           />
         ))}
       </ul>
+      <Button size="sm" className="shrink-0" onClick={onCreateProject}>
+        + New project
+      </Button>
       <p className="shrink-0 px-0.5 text-hud-micro uppercase tracking-[0.06em] text-disabled">
         Lease TTL {formatDuration(900)} · heartbeat 120s
       </p>

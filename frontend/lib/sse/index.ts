@@ -42,7 +42,14 @@ export {
 export { createEventStream } from "./client";
 export type { EventStream, EventStreamOptions } from "./client";
 
-export { NAMED_EVENTS, eventSourceTransport, frameFromData } from "./transport";
+export {
+  NAMED_EVENTS,
+  SUBSCRIBED_EVENTS,
+  TASK_EVENT_NAMES,
+  eventSourceTransport,
+  frameFromData,
+} from "./transport";
+
 export type { Transport, TransportFactory, TransportHandlers } from "./transport";
 export { MOCK_FRAME_INTERVAL_MS, createMockTransportFactory, replayFixture } from "./mock-transport";
 

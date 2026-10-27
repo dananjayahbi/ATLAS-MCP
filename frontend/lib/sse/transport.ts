@@ -7,7 +7,7 @@ export interface TransportHandlers {
   onOpen(): void;
   /** default (`message`) events, and any frame the server did not name */
   onMessage(data: string, lastEventId: string): void;
-  /** explicitly named events: `stream.reset`, `stream.reconnect`, `error` */
+  /** any named event: the task-event types plus `stream.reset`/`stream.reconnect`/`error` */
   onNamedEvent(name: string, data: string, lastEventId: string): void;
   onError(): void;
 }
@@ -21,19 +21,53 @@ export type TransportFactory = (url: string, handlers: TransportHandlers) => Tra
 /** Events that `EventSource.onmessage` never delivers (named `event:` values). */
 export const NAMED_EVENTS = ["stream.reset", "stream.reconnect", "error"] as const;
 
+/**
+ * Doc 09 §5.1 — the server mirrors the payload `type` into the SSE `event:` field,
+ * so **every** task-event name must be subscribed or `EventSource` silently drops
+ * it (`onmessage` only fires for nameless events). This list must stay in sync with
+ * `EventType` in `lib/types/enums.ts`; a missing entry means that event type never
+ * reaches the client at all.
+ */
+export const TASK_EVENT_NAMES = [
+  "task.created",
+  "task.updated",
+  "task.status_changed",
+  "task.priority_changed",
+  "task.dod_updated",
+  "task.log",
+  "task.lease_expired",
+  "task.submitted",
+  "review.approved",
+  "review.rejected",
+  "discovery.created",
+  "discovery.approved",
+  "discovery.rejected",
+  "agent.connected",
+  "agent.heartbeat",
+  "system.boot",
+  "system.recovery",
+  "telemetry.tick",
+] as const;
+
+/** Every name the client must listen for. */
+export const SUBSCRIBED_EVENTS = [...NAMED_EVENTS, ...TASK_EVENT_NAMES] as const;
+
 /** Real transport: a single `EventSource`, with the browser's native reconnect. */
 export const eventSourceTransport: TransportFactory = (url, handlers) => {
   const source = new EventSource(url);
+  const listeners = new Map<string, (event: Event) => void>();
 
   source.onopen = () => handlers.onOpen();
   source.onmessage = (event: MessageEvent<string>) => {
     handlers.onMessage(event.data, event.lastEventId ?? "");
   };
-  for (const name of NAMED_EVENTS) {
-    source.addEventListener(name, (event: Event) => {
+  for (const name of SUBSCRIBED_EVENTS) {
+    const listener = (event: Event) => {
       const message = event as MessageEvent<string>;
       handlers.onNamedEvent(name, message.data ?? "", message.lastEventId ?? "");
-    });
+    };
+    listeners.set(name, listener);
+    source.addEventListener(name, listener);
   }
   source.onerror = () => handlers.onError();
 
@@ -42,7 +76,10 @@ export const eventSourceTransport: TransportFactory = (url, handlers) => {
       source.onopen = null;
       source.onmessage = null;
       source.onerror = null;
-      for (const name of NAMED_EVENTS) source.removeEventListener(name, () => {});
+      // `removeEventListener` needs the same reference that was added; passing a
+      // fresh arrow function silently leaves the listener attached.
+      for (const [name, listener] of listeners) source.removeEventListener(name, listener);
+      listeners.clear();
       source.close();
     },
   };

@@ -42,8 +42,17 @@ def _comment(text: str) -> bytes:
     return f": {text}\n\n".encode("utf-8")
 
 
+def _retry_hint() -> bytes:
+    """`retry:` frame flushed before replay so `EventSource` fires `open` (§3.2 step 4)."""
+    return b"retry: 3000\n\n"
+
+
 def _last_event_seq(request, project_id) -> int:
-    """Resolve `Last-Event-ID` (a ULID) to a `seq`; fall back to 0."""
+    """Resolve `Last-Event-ID` (a ULID) to a `seq`; fall back to 0.
+
+    0 means "no usable cursor" — the caller then replays from the beginning
+    rather than treating it as a gap.
+    """
     token = request.headers.get("Last-Event-ID") or _param(request, "last_event_id")
     if not token:
         return 0
@@ -61,20 +70,40 @@ def _param(request, name: str) -> str:
     return request.GET.get(name) or ""
 
 
+REPLAY_LIMIT = 500
+
+
 def _initial_frames(request, project, task_id):
     """Resume payload, computed off the event loop.
 
     Django forbids ORM access from an async context (`SynchronousOnlyOperation`),
     so `_stream_async` calls this via `asyncio.to_thread`.
+
+    Doc 09 §3.2: a fresh client (no cursor) **replays history** rather than
+    receiving `stream.reset`. A reset means "the replay you asked for is
+    impossible", not "welcome" — emitting it on every connect would pin the HUD
+    in degraded mode for its whole lifetime.
     """
+    requested = request.headers.get("Last-Event-ID") or _param(request, "last_event_id")
     after = _last_event_seq(request, project.pk)
-    frames = [
-        _frame(envelope)
-        for envelope in replay(project.pk, after_seq=after, limit=500)
+    replayed = [
+        envelope
+        for envelope in replay(project.pk, after_seq=after, limit=REPLAY_LIMIT)
         if is_visible(envelope=envelope, task_id=task_id)
     ]
-    if after == 0:
-        frames.append(_frame(reset_frame(project.slug)))
+    frames: list[bytes] = []
+    control: Envelope | None = None
+
+    if requested and after == 0:
+        # The client holds a cursor the server cannot resolve (retention rollover).
+        control = reset_frame(project.slug, reason="UNKNOWN_EVENT_ID")
+    elif after and len(replayed) >= REPLAY_LIMIT:
+        control = reset_frame(project.slug, reason="REPLAY_GAP", watermark=after)
+
+    if control is not None:
+        return after, [_frame(control)]
+
+    frames = [_frame(envelope) for envelope in replayed]
     return after, frames
 
 
@@ -87,7 +116,11 @@ async def _stream_async(request, *, project: Project, task_id=None, replay_only=
     q = bus.subscribe(project.slug)
 
     try:
-        # 1. Resume: replay everything the client missed (+ reset when fresh).
+        # 1. Reconnect hint as the very first bytes (Doc 09 §3.2 step 4). Without
+        #    this an empty project produces no body bytes for a whole keepalive
+        #    interval, so `EventSource` never fires `open` and the HUD sits on
+        #    CONNECTING.
+        yield _retry_hint()
         for frame in frames:
             yield frame
 
