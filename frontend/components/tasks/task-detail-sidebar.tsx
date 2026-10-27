@@ -1,14 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import dynamic from "next/dynamic";
 import { useHotkeys } from "@/hooks/use-hotkeys";
 import { formatPriority } from "@/lib/format/priority";
 import type { AssetDTO } from "@/lib/types/enums";
+import type { TaskStatus } from "@/lib/types/enums";
 import type { TaskDetailDTO } from "@/lib/types/api";
+import { AnnotationCanvasModal } from "@/components/tasks/annotation-canvas-modal";
 import { AttachmentChips } from "@/components/tasks/attachment-chips";
+import { AttachmentUploadPanel } from "@/components/tasks/attachment-upload-panel";
+import { AssigneeEditor } from "@/components/tasks/assignee-editor";
 import { PrioritySlider } from "@/components/tasks/priority-slider";
 import { ReviewActions } from "@/components/tasks/review-actions";
+import { STATUS_META } from "@/lib/format/tone";
+import { StatusMenu } from "@/components/tasks/status-menu";
 import { TaskMeta } from "@/components/tasks/task-meta";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,12 +22,12 @@ import { Panel } from "@/components/ui/panel";
 
 /** Doc 06 §7.2 / §10 — right column of the task detail view. */
 
-const AnnotationCanvas = dynamic(() => import("@/components/canvas/AnnotationCanvas"), { ssr: false });
-
 export type TaskDetailSidebarProps = {
   task: TaskDetailDTO;
+  /** Asset open in the full Doc 07 review canvas, or null. */
   canvasAsset: AssetDTO | null;
   onOpenCanvas: (asset: AssetDTO) => void;
+  onOpenMarkup: (asset: AssetDTO) => void;
   onCloseCanvas: () => void;
   priorityOpen: boolean;
   onPriorityOpenChange: (open: boolean) => void;
@@ -30,14 +35,19 @@ export type TaskDetailSidebarProps = {
   onApprove: () => Promise<unknown>;
   onReject: (notes: string) => Promise<unknown>;
   onRequeue: () => void;
+  onSetStatus: (status: TaskStatus) => void;
+  statusBusy?: boolean;
   onError: (message: string | null) => void;
   imageAsset: AssetDTO | null;
+  /** Refreshes after an upload so the new asset appears without a reload. */
+  onAssetAdded?: () => void;
 };
 
 export function TaskDetailSidebar({
   task,
   canvasAsset,
   onOpenCanvas,
+  onOpenMarkup,
   onCloseCanvas,
   priorityOpen,
   onPriorityOpenChange,
@@ -45,13 +55,16 @@ export function TaskDetailSidebar({
   onApprove,
   onReject,
   onRequeue,
+  onSetStatus,
+  statusBusy = false,
   onError,
   imageAsset,
+  onAssetAdded,
 }: TaskDetailSidebarProps) {
   useHotkeys(
     [
       { key: "p", scopes: ["pane"], run: () => onPriorityOpenChange(!priorityOpen) },
-      { key: "o", scopes: ["pane"], run: () => imageAsset && onOpenCanvas(imageAsset) },
+      { key: "o", scopes: ["pane"], run: () => imageAsset && onOpenMarkup(imageAsset) },
     ],
     { scopeStack: ["pane", "global"] },
   );
@@ -65,7 +78,22 @@ export function TaskDetailSidebar({
       </Panel>
 
       <Panel panelId="attachments" title="Attachments" meta={`${task.assets.length}`}>
-        <AttachmentChips assets={task.assets} onOpenCanvas={onOpenCanvas} />
+        <AttachmentChips assets={task.assets} onOpenCanvas={onOpenMarkup} />
+        {imageAsset ? (
+          <div className="mt-1 flex flex-wrap items-center gap-1">
+            <Button size="sm" variant="ghost" onClick={() => onOpenMarkup(imageAsset)}>
+              Mark up
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => onOpenCanvas(imageAsset)}>
+              Review canvas
+            </Button>
+          </div>
+        ) : (
+          <p className="mt-1 text-hud-micro text-disabled">
+            Attach a screenshot to enable markup.
+          </p>
+        )}
+        <AttachmentUploadPanel taskId={task.id} onUploaded={onAssetAdded} disabled={locked} />
       </Panel>
 
       <Panel
@@ -88,6 +116,19 @@ export function TaskDetailSidebar({
             ) : null}
           </p>
         )}
+      </Panel>
+
+      <Panel panelId="status" title="Status" meta={STATUS_META[task.status].label}>
+        <StatusMenu
+          status={task.status}
+          onChange={onSetStatus}
+          busy={statusBusy}
+          disabled={statusBusy}
+        />
+      </Panel>
+
+      <Panel panelId="assignee" title="Assignment" meta={task.assigned_agent_id ?? "unassigned"}>
+        <AssigneeEditor task={task} />
       </Panel>
 
       <Panel panelId="review" title="Review actions" meta={task.status}>
@@ -133,33 +174,13 @@ export function TaskDetailSidebar({
       </div>
 
       {canvasAsset ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Annotation canvas"
-          className="fixed inset-0 z-50 flex flex-col bg-[var(--surface-scrim)] p-6"
-        >
-          <div className="flex min-h-0 flex-1 flex-col gap-2 rounded-hud border border-grid-strong bg-panel p-3">
-            <div className="flex shrink-0 items-center gap-2">
-              <h2 className="min-w-0 flex-1 truncate text-hud-label uppercase tracking-[0.06em] text-primary">
-                {canvasAsset.filename}
-              </h2>
-              <Button size="sm" onClick={onCloseCanvas}>
-                Close <Kbd size="xs">Esc</Kbd>
-              </Button>
-            </div>
-            <div className="min-h-0 flex-1">
-              <AnnotationCanvas
-                taskId={task.id}
-                sourceAsset={canvasAsset}
-                mode={locked ? "review" : "create"}
-                className="h-full min-h-[60vh]"
-                onExport={() => onCloseCanvas()}
-                onError={(canvasError) => onError(canvasError.message)}
-              />
-            </div>
-          </div>
-        </div>
+        <AnnotationCanvasModal
+          taskId={task.id}
+          asset={canvasAsset}
+          locked={locked}
+          onClose={onCloseCanvas}
+          onError={onError}
+        />
       ) : null}
 
       <p className="text-hud-micro uppercase tracking-[0.06em] text-disabled">

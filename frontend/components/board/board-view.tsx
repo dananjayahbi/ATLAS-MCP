@@ -5,6 +5,9 @@ import { formatAgeHours } from "@/lib/format/duration";
 import { PRIORITY_GROUPS, priorityBand, PRIORITY_LABEL, PRIORITY_TEXT_CLASS } from "@/lib/format/priority";
 import { STATUS_META, TASK_STATUS_ORDER } from "@/lib/format/tone";
 import type { TaskSummaryDTO } from "@/lib/types/api";
+import type { AssetPreview } from "@/lib/api/assets";
+import type { TaskStatus } from "@/lib/types/enums";
+import { statusTargets } from "@/components/tasks/status-menu";
 import { Tabs } from "@/components/ui/tabs";
 import { BoardColumn } from "./board-column";
 import { TaskCard } from "./task-card";
@@ -21,6 +24,17 @@ export type TaskBoardViewProps = {
   selectedIds?: ReadonlySet<string>;
   onSelect?: (id: string) => void;
   onOpen?: (id: string) => void;
+  /** Batched thumbnail index; `undefined` renders no thumbnail row. */
+  previewFor?: (taskId: string) => { images: readonly AssetPreview[]; total: number } | undefined;
+  onOpenImage?: (taskId: string, assetId: string) => void;
+  onEditTask?: (id: string) => void;
+  /**
+   * Drag-and-drop status change. Only wired when grouping by status: dropping
+   * onto a priority band has no status meaning.
+   */
+  onMoveTask?: (taskId: string, status: TaskStatus) => void;
+  /** Status currently in flight, so columns can highlight legal targets. */
+  draggingStatus?: TaskStatus | null;
   className?: string;
 };
 
@@ -52,6 +66,11 @@ export function TaskBoardView({
   selectedIds,
   onSelect,
   onOpen,
+  previewFor,
+  onOpenImage,
+  onEditTask,
+  onMoveTask,
+  draggingStatus,
   className,
 }: TaskBoardViewProps) {
   const buckets = bucketById(tasks, group);
@@ -87,6 +106,20 @@ export function TaskBoardView({
             glyph={bucket.status ? STATUS_META[bucket.status].glyph : undefined}
             accentVar={bucket.status ? STATUS_META[bucket.status].cssVar : undefined}
             emptyText={group === "status" ? "No tasks" : "Empty band"}
+            onDropTask={
+              group === "status" && bucket.status && onMoveTask
+                ? (taskId) => {
+                    const target = bucket.status;
+                    if (target && target !== draggingStatus) onMoveTask(taskId, target);
+                  }
+                : undefined
+            }
+            dropTarget={
+              group === "status" &&
+              Boolean(draggingStatus) &&
+              Boolean(bucket.status) &&
+              statusTargets(draggingStatus as TaskStatus).includes(bucket.status as TaskStatus)
+            }
           >
             {bucket.rows.map((task) => (
               <TaskCard
@@ -96,6 +129,11 @@ export function TaskBoardView({
                 selected={selectedIds?.has(task.id) ?? false}
                 onSelect={onSelect}
                 onOpen={onOpen}
+                thumbnails={previewFor?.(task.id)?.images}
+                thumbnailTotal={previewFor?.(task.id)?.total}
+                onOpenImage={onOpenImage}
+                onEdit={onEditTask}
+                draggable={group === "status" && Boolean(onMoveTask)}
                 compact
               />
             ))}

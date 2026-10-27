@@ -39,18 +39,30 @@ export function Dialog({
   className,
 }: DialogProps) {
   const panel = useRef<HTMLDivElement>(null);
+  // `onClose` is usually an inline arrow, so a fresh identity every render used
+  // to re-run the focus effect and yank focus to the header button after the
+  // first keystroke. Keep the latest handler in a ref and depend on `open` only.
+  const closeRef = useRef(onClose);
+  const busyRef = useRef(busy);
+  useEffect(() => {
+    closeRef.current = onClose;
+    busyRef.current = busy;
+  });
 
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement as HTMLElement | null;
     const node = panel.current;
-    const first = node?.querySelector<HTMLElement>(FOCUSABLE);
+    const preferred = node?.querySelector<HTMLElement>("[data-autofocus]");
+    const first = preferred ?? node?.querySelector<HTMLElement>(FOCUSABLE);
+    // The panel itself is the fallback rather than the header Close button, so
+    // the first Tab still lands on the first real control.
     (first ?? node)?.focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) {
+      if (event.key === "Escape" && !busyRef.current) {
         event.stopPropagation();
-        onClose();
+        closeRef.current();
         return;
       }
       if (event.key !== "Tab" || !node) return;
@@ -74,7 +86,7 @@ export function Dialog({
       document.removeEventListener("keydown", onKeyDown, { capture: true });
       previous?.focus?.();
     };
-  }, [open, busy, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

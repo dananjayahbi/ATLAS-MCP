@@ -93,9 +93,9 @@ ATLAS-MCP/
 │   └── data/           SQLite (gitignored)
 ├── frontend/           Next.js 15 + React 19 + Tailwind v4
 │   ├── app/            routes + the /api/v1 proxy route handler
-│   ├── components/     ui, hud, board, matrix, tasks, discoveries, canvas, terminal
-│   ├── lib/            api client, types, sse client, canvas engine, format helpers
-│   ├── hooks/          keyboard, hotkeys, toast, clock
+│   ├── components/     ui, hud, board, markup, tasks, discoveries, canvas, terminal
+│   ├── lib/            api client, types, sse client, markup, canvas engine, format
+│   ├── hooks/          keyboard, hotkeys, toast, clock, markup history, queues
 │   └── styles/         frozen design tokens
 ├── mcp_server/         FastMCP stdio server exposing 8 tools
 ├── storage/            runtime artifacts (gitignored)
@@ -134,7 +134,13 @@ The HUD is keyboard-first; every action below is reachable without a mouse.
 | Task | Where | Shortcut |
 | :--- | :--- | :--- |
 | Register a project | `＋ New` in the top bar, or `+ New project` in the rail | — |
+| Edit a project | `settings` on its rail card | — |
+| Archive / restore a project | `settings` → `Archive project…` (rail then offers `restore`) | — |
 | Create a task | `New task` on a project board | `n` |
+| Attach screenshots | Drag files onto the dropzone in the create panel, or `Browse` | — |
+| Edit or delete a task | `edit` on the task card, or the pencil in the detail pane | — |
+| Mark up a screenshot | Click a task card thumbnail → pen / eraser / pan / zoom → `Burn in` | `Space`+drag pans, wheel zooms, `⌘/Ctrl+Z` undoes |
+| Change a task's status | Drag the card between columns, or `Move to` in the detail pane | — |
 | Search / filter tasks | Search bar above the board (debounced, URL-synced) | `/` |
 | Bulk reprioritise / requeue / archive | Select rows with the checkbox, then the bulk bar | `x` selects, `Esc` clears |
 | Triage discoveries | `/discoveries` — approve, edit priority, or dismiss | `j`/`k`, `a`, `e`, `Del`, `u` |
@@ -147,10 +153,59 @@ Board filters round-trip through the URL (`?q=`, `?status=`, `?agent=`,
 reload. Search is debounced by 250 ms so typing never pushes a history entry per
 keystroke.
 
+### Assigning a task to an agent
+
+There is no assignee dropdown at creation time because **assignment is a lease,
+not a field**. An agent assigns itself by calling `claim_next_task`, which grants
+a 900 s lease and is the only thing that makes a task `IN_PROGRESS`. Two operator
+overrides exist for the cases a queue cannot express:
+
+| You want | Use |
+| :--- | :--- |
+| Pre-bind a queued task to the next agent that asks | `Claim for agent` on the create/edit dialog |
+| Correct the recorded owner of an unleased task | `Assignee` in the detail pane (`PATCH /tasks/{id}/assignee/`) |
+
+Both refuse while a lease is live; the agent filter in the board toolbar lists
+every assignee including `Agent-Manual`.
+
+### Marking up a screenshot
+
+Screenshots are attached to a task and shown as a thumbnail grid on its card.
+Clicking a thumbnail opens the full-viewport markup canvas: the preview fills the
+left, the task's other images are listed on the right, and the toolbar carries
+pen, eraser, width, undo/redo and fit. Panning is `Space`+drag, zoom is the wheel,
+and everything is stored in image-natural pixels so the strokes survive any
+display size.
+
+`Burn in` asks for confirmation, then flattens the strokes into the PNG at
+natural resolution. The server writes the flattened image as a new
+`ANNOTATED_CANVAS` asset, records the stroke document as a `<stem>.canvas.json`
+side-car next to it, and — when the source is the one being edited — rewrites the
+source bytes in place so existing links keep working. Nothing is destructive: the
+previous revision is still an asset row.
+
 **Bulk actions are sequential, never `Promise.all`.** Concurrent priority patches
 on one task race the `BEGIN IMMEDIATE` writer and produce spurious
 `STALE_LEASE`. The bar reports `n succeeded, m failed`. Approving a review in bulk
 is deliberately not offered — T8 is the only hard human gate.
+
+### Operator routes
+
+Doc 04 §5 originally specified read-mostly routes; the operator surface above
+added four write paths. They all keep the same envelope (`{data}` / `{error}`),
+the same error-code table, and never bypass `core/services/*`.
+
+| Route | Method | Notes |
+| :--- | :--- | :--- |
+| `/tasks/{id}/` | `PATCH` | Whitelist: `title`, `description`, `priority`, `blocked_by`, `dod_items`. `priority` is routed through `set_priority` so `task.priority_changed` still fires. Refused on `COMPLETED`. |
+| `/tasks/{id}/` | `DELETE` | Only `PENDING`/`REJECTED` with `attempt_count == 0`, no lease, no submission, no assets. Otherwise `409`. |
+| `/tasks/{id}/status/` | `PATCH` | `{"status", "note"?}`. Delegates to the single guard-table implementation per transition, so the 409s are identical to the MCP path. |
+| `/tasks/{id}/assignee/` | `PATCH` | `{"assigned_agent_id": string \| null}`. Refuses while leased. |
+| `/projects/{slug}/` | `PATCH` | Whitelist: `name`, `repo_path`, `accent`, `global_rules`. Slug is immutable. |
+| `/projects/{slug}/archive/` | `POST` | `{"archived": bool}`; omitted body toggles. Archiving blocks claims (`claim_specific_task` checks `archived_at`). |
+| `/assets/{id}/annotation/` | `GET` | The stored stroke side-car, or `null`. |
+| `/assets/{id}/annotation/` | `POST` | Multipart: flattened `image` + stroke `document` JSON + `replace_source`. Appends an `ANNOTATED_CANVAS` row and side-car. |
+| `/projects/{slug}/assets/` | `GET` | `[{task_id, images[≤3], total}]` for board thumbnails. Separate cache entry — `TaskSummaryDTO` stays frozen at its token budget. |
 
 ### Throttling
 
@@ -196,18 +251,22 @@ would misreport an ordinary burst as a backend fault and would select the
 ## Verification
 
 ```powershell
-# Backend: 33 integration tests (incl. the 20-thread claim race, I1–I6)
+# Backend: 65 integration tests (incl. the 20-thread claim race, I1–I6, and
+# the 22 operator-edit guards covering edit / delete / archive / status / markup)
 .\.venv\Scripts\python.exe -m pytest -q
 
-# Frontend: 41 unit tests (SSE parser, ring buffer, formatters, API client)
+# Frontend: 51 unit tests (SSE parser, ring buffer, formatters, API client)
 npm --prefix frontend test
 
-# End-to-end: 9 Playwright specs against the real backend
+# End-to-end: 16 Playwright specs against the real backend
 npm --prefix frontend run test:e2e
 
 # Cross-document drift gates (tokens, error codes, constants, migrations,
-# routes, encoding, doc structure) — 7 gates
+# routes, encoding, doc structure) — 7 gates, 39 routes
 .\.venv\Scripts\python.exe scripts\verify_series.py
+
+# MCP handshake against the live backend
+.\.venv\Scripts\python.exe scripts\mcp_probe.py
 
 # Production build (bundle budget check)
 npm --prefix frontend run build
@@ -241,6 +300,12 @@ specs. Run it before every commit that touches both docs and code.
   produces a reset. Emitting it on every connect pins the HUD in DEGRADED.
 - **Agents are token-constrained.** The claim projection carries no timestamps,
   no event history, no base64 — and is hard-capped at 16 384 bytes.
+- **Two canvas engines, on purpose.** `components/canvas/` is the review-grade
+  engine for Doc 07 submissions (frozen wire format, source-image round trip).
+  `lib/markup/` is the operator's pen/eraser/pan/zoom annotator: ~450 lines, all
+  geometry in image-natural pixels, and it burns into a PNG rather than producing
+  a review document. Merging them would either bloat the markup path or loosen
+  the review contract.
 
 ---
 
@@ -250,6 +315,12 @@ specs. Run it before every commit that touches both docs and code.
   need a shared store (tracked as `DEF-08-02` in Doc 10).
 - `stream.reset` is a transport-only pseudo-type, intentionally absent from the
   `EventType` enum.
+- `frontend/lib/api/mock-handlers-edit.ts` is type-checked but has no test. Mock
+  mode covers the new write routes for offline UI work; the real routes are
+  pinned by `tests/integration/test_operator_edits.py`.
+- The task detail sidebar exposes both `Mark up` (burn-in annotator) and
+  `Review canvas` (Doc 07 engine). They are labelled explicitly, but an operator
+  looking for "the image tool" has two entries until one is retired.
 
 ---
 

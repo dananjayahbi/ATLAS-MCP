@@ -198,6 +198,15 @@ def claim_specific_task(
         if task.status != TaskStatus.PENDING:
             raise InvalidTransition(task.status, "claim_for_agent")
 
+        # T5 excludes archived projects from the claim filter; T14 must agree or
+        # archiving would still let a human hand out work in a parked workspace.
+        if task.project.archived_at is not None:
+            raise InvalidTransition(
+                task.status,
+                "claim_for_agent",
+                "Project is archived; restore it before claiming work.",
+            )
+
         if task.is_blocked():
             raise InvalidTransition(task.status, "claim_for_agent",
                                     "Task is blocked by an incomplete dependency.")

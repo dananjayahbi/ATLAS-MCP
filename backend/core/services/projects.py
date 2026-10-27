@@ -96,4 +96,16 @@ def archive_project(project: Project) -> Project:
 
     project.archived_at = utcnow()
     project.save(update_fields=["archived_at", "updated_at"])
+    audit(project=project, event=AuditEvent.PROJECT_ARCHIVED,
+          detail={"slug": project.slug})
+    return project
+
+
+@transaction.atomic
+def restore_project(project: Project) -> Project:
+    """Un-archive. Queued work resumes because the claim filter is `archived_at IS NULL`."""
+    project.archived_at = None
+    project.save(update_fields=["archived_at", "updated_at"])
+    audit(project=project, event=AuditEvent.PROJECT_RESTORED,
+          detail={"slug": project.slug})
     return project

@@ -48,6 +48,8 @@ export const qk = {
     board: (slug: string, fk: string) => ["tasks", "board", slug, fk] as const,
     list: (slug: string, fk: string) => ["tasks", "list", slug, fk] as const,
     detail: (id: string) => ["tasks", "detail", id] as const,
+    /** Cross-project queue for the command center (Doc 06 §5.1). */
+    global: (fk: string) => ["tasks", "global", fk] as const,
   },
   discoveries: {
     root: ["discoveries"] as const,
@@ -65,7 +67,9 @@ export const qk = {
   },
   assets: {
     root: ["assets"] as const,
+    byProject: (slug: string) => ["assets", "byProject", slug] as const,
     byTask: (id: string) => ["assets", "byTask", id] as const,
     meta: (id: string) => ["assets", "meta", id] as const,
+    annotation: (id: string) => ["assets", "annotation", id] as const,
   },
 } as const;

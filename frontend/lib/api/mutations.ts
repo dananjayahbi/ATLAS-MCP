@@ -5,9 +5,10 @@ import type { DiscoveryDTO, ListResponse, ProjectDTO, TaskDetailDTO, TaskSummary
 import type { ApiError } from "./client";
 import { discoveriesApi } from "./discoveries";
 import { qk } from "./keys";
-import { projectsApi, type ProjectCreateBody } from "./projects";
+import { projectsApi, type ProjectCreateBody, type ProjectPatch } from "./projects";
 import { reviewsApi } from "./reviews";
-import { tasksApi, type TaskCreateBody } from "./tasks";
+import { tasksApi, type TaskCreateBody, type TaskUpdateBody } from "./tasks";
+import type { TaskStatus } from "@/lib/types/enums";
 import type { MatrixXAxis } from "./telemetry";
 
 /**
@@ -190,6 +191,115 @@ export function useCreateProject(): UseMutationResult<ProjectDTO, ApiError, Proj
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: qk.projects.root });
       void queryClient.invalidateQueries({ queryKey: qk.telemetry.summary() });
+    },
+  });
+}
+
+/**
+ * Editing task metadata. Deliberately not optimistic: the server owns the DoD
+ * rewrite (completion is carried across a label edit) and the diff it returns is
+ * what the detail pane must show.
+ */
+export function useUpdateTask(): UseMutationResult<
+  TaskDetailDTO,
+  ApiError,
+  { id: string; body: TaskUpdateBody }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<TaskDetailDTO, ApiError, { id: string; body: TaskUpdateBody }>({
+    mutationFn: ({ id, body }) => tasksApi.update(id, body),
+    onSuccess: (task) => {
+      queryClient.setQueryData(qk.tasks.detail(task.id), task);
+    },
+    onSettled: (_data, _error, variables) => {
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.root });
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.detail(variables.id) });
+      void queryClient.invalidateQueries({ queryKey: qk.projects.root });
+    },
+  });
+}
+
+export function useDeleteTask(): UseMutationResult<void, ApiError, { id: string }> {
+  const queryClient = useQueryClient();
+  return useMutation<void, ApiError, { id: string }>({
+    mutationFn: ({ id }) => tasksApi.remove(id),
+    onSuccess: (_data, variables) => {
+      queryClient.removeQueries({ queryKey: qk.tasks.detail(variables.id) });
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.root });
+      void queryClient.invalidateQueries({ queryKey: qk.projects.root });
+      void queryClient.invalidateQueries({ queryKey: qk.telemetry.root });
+    },
+  });
+}
+
+/** Manual status override; board drag-and-drop and the detail menu share this. */
+export function useSetTaskStatus(): UseMutationResult<
+  TaskDetailDTO,
+  ApiError,
+  { id: string; status: TaskStatus; note?: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<TaskDetailDTO, ApiError, { id: string; status: TaskStatus; note?: string }>({
+    mutationFn: ({ id, status, note }) => tasksApi.setStatus(id, status, note ?? ""),
+    onSettled: (_data, _error, variables) => {
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.detail(variables.id) });
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.root });
+      void queryClient.invalidateQueries({ queryKey: qk.projects.root });
+      void queryClient.invalidateQueries({ queryKey: qk.telemetry.root });
+      void queryClient.invalidateQueries({ queryKey: qk.reviews.root });
+    },
+  });
+}
+
+export function useSetAssignee(): UseMutationResult<
+  TaskDetailDTO,
+  ApiError,
+  { id: string; agentIdentifier: string | null }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<TaskDetailDTO, ApiError, { id: string; agentIdentifier: string | null }>({
+    mutationFn: ({ id, agentIdentifier }) => tasksApi.setAssignee(id, agentIdentifier),
+    onSettled: (_data, _error, variables) => {
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.detail(variables.id) });
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.root });
+    },
+  });
+}
+
+export function useUpdateProject(): UseMutationResult<
+  ProjectDTO,
+  ApiError,
+  { slug: string; body: ProjectPatch }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<ProjectDTO, ApiError, { slug: string; body: ProjectPatch }>({
+    mutationFn: ({ slug, body }) => projectsApi.update(slug, body),
+    onSuccess: (project) => {
+      queryClient.setQueryData(qk.projects.detail(project.slug), project);
+    },
+    onSettled: (_data, _error, variables) => {
+      void queryClient.invalidateQueries({ queryKey: qk.projects.root });
+      void queryClient.invalidateQueries({ queryKey: qk.projects.detail(variables.slug) });
+      void queryClient.invalidateQueries({ queryKey: qk.telemetry.root });
+    },
+  });
+}
+
+export function useArchiveProject(): UseMutationResult<
+  ProjectDTO,
+  ApiError,
+  { slug: string; archived?: boolean }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<ProjectDTO, ApiError, { slug: string; archived?: boolean }>({
+    mutationFn: ({ slug, archived = true }) => projectsApi.archive(slug, archived),
+    onSettled: (_data, _error, variables) => {
+      void queryClient.invalidateQueries({ queryKey: qk.projects.root });
+      void queryClient.invalidateQueries({ queryKey: qk.projects.detail(variables.slug) });
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.root });
+      void queryClient.invalidateQueries({ queryKey: qk.telemetry.root });
     },
   });
 }

@@ -20,6 +20,8 @@ export type WorkspaceRailProps = {
   projects: readonly ProjectDTO[];
   loading?: boolean;
   onCreateProject?: () => void;
+  /** Opens the project settings dialog; archive lives there. */
+  onEditProject?: (project: ProjectDTO) => void;
   className?: string;
 };
 
@@ -39,10 +41,12 @@ function RailCard({
   project,
   active,
   onSelect,
+  onEdit,
 }: {
   project: ProjectDTO;
   active: boolean;
   onSelect: () => void;
+  onEdit?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const status = deriveProjectStatus(project);
@@ -110,6 +114,15 @@ function RailCard({
         >
           Matrix
         </Link>
+        <button
+          type="button"
+          onClick={onEdit}
+          className="rounded-chip px-1 font-machine text-hud-micro uppercase text-secondary hover:text-flow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-flow"
+          aria-label={`Settings for ${project.slug}`}
+          title="Edit project, archive or restore"
+        >
+          {project.archived_at ? "restore" : "settings"}
+        </button>
         <span className="min-w-0 flex-1" />
         <button
           type="button"
@@ -128,7 +141,13 @@ function RailCard({
   );
 }
 
-export function WorkspaceRail({ projects, loading = false, onCreateProject, className }: WorkspaceRailProps) {
+export function WorkspaceRail({
+  projects,
+  loading = false,
+  onCreateProject,
+  onEditProject,
+  className,
+}: WorkspaceRailProps) {
   const pathname = usePathname() ?? "";
   const activeSlug = projects.find((project) => pathname.includes(`/projects/${project.slug}`))?.slug ?? null;
 
@@ -170,6 +189,7 @@ export function WorkspaceRail({ projects, loading = false, onCreateProject, clas
             onSelect={() => {
               window.location.assign(`/projects/${project.slug}`);
             }}
+            onEdit={() => onEditProject?.(project)}
           />
         ))}
       </ul>

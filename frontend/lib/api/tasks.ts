@@ -1,6 +1,6 @@
 import type { ListResponse, TaskDetailDTO, TaskSummaryDTO } from "@/lib/types/api";
 import type { TaskStatus } from "@/lib/types/enums";
-import { apiGet, apiPatch, apiPost } from "./client";
+import { apiDelete, apiGet, apiPatch, apiPost } from "./client";
 
 /** Doc 01 §12 — every task route lives here; no URL string exists outside this module. */
 
@@ -42,6 +42,14 @@ export type TaskCreateBody = {
   parent_task_id?: string | null;
 };
 
+export type TaskUpdateBody = {
+  title?: string;
+  description?: string;
+  priority?: number;
+  blocked_by?: string[];
+  dod_items?: string[];
+};
+
 export const tasksApi = {
   list: (slug: string, query: TaskListQuery = {}, signal?: AbortSignal) => {
     const search = new URLSearchParams();
@@ -58,7 +66,13 @@ export const tasksApi = {
   get: (id: string, signal?: AbortSignal) => apiGet<TaskDetailDTO>(`/tasks/${id}/`, { signal }),
   create: (slug: string, body: TaskCreateBody) =>
     apiPost<TaskSummaryDTO>(`/projects/${encodeURIComponent(slug)}/tasks/`, body),
-  patch: (id: string, body: Partial<TaskDetailDTO>) => apiPatch<TaskDetailDTO>(`/tasks/${id}/`, body),
+  update: (id: string, body: TaskUpdateBody) => apiPatch<TaskDetailDTO>(`/tasks/${id}/`, body),
+  /** Hard delete, fenced server-side to untouched tasks (Doc 01 §8 T12 direction). */
+  remove: (id: string) => apiDelete<void>(`/tasks/${id}/`),
+  setStatus: (id: string, status: TaskStatus, note = "") =>
+    apiPatch<TaskDetailDTO>(`/tasks/${id}/status/`, { status, note }),
+  setAssignee: (id: string, agentIdentifier: string | null) =>
+    apiPatch<TaskDetailDTO>(`/tasks/${id}/assignee/`, { assigned_agent_id: agentIdentifier }),
   setPriority: (id: string, priority: number) => apiPatch<TaskSummaryDTO>(`/tasks/${id}/priority/`, { priority }),
   /** `completed` is sent explicitly so the server never has to infer a toggle. */
   toggleDod: (id: string, itemId: number, completed: boolean) =>

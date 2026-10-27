@@ -20,6 +20,10 @@ export type BoardColumnProps = {
   emptyText?: string;
   collapsedByDefault?: boolean;
   onOpenFirst?: () => void;
+  /** Drop target for status drags; omitted for the priority grouping. */
+  onDropTask?: (taskId: string) => void;
+  /** True when this column is a legal destination for the drag in flight. */
+  dropTarget?: boolean;
   children: ReactNode;
   className?: string;
 };
@@ -33,17 +37,43 @@ export function BoardColumn({
   actionHint,
   emptyText = "Nothing here",
   collapsedByDefault = false,
+  onDropTask,
+  dropTarget = false,
   children,
   className,
 }: BoardColumnProps) {
   const [collapsed, setCollapsed] = useState(collapsedByDefault);
+  const [over, setOver] = useState(false);
+  // A priority-grouped column has no status semantics, so it must not react to
+  // a status drag even if a handler leaks in from the parent.
+  const droppable = Boolean(onDropTask);
 
   return (
     <section
       aria-label={`${label} — ${count}`}
       data-column={id}
+      data-drop-target={droppable ? "true" : undefined}
       style={{ contentVisibility: "auto" }}
-      className={cn("flex min-h-0 min-w-0 flex-col overflow-hidden rounded-hud border border-grid bg-panel/60", className)}
+      onDragOver={(event) => {
+        if (!droppable) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        if (!over) setOver(true);
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(event) => {
+        if (!droppable) return;
+        event.preventDefault();
+        setOver(false);
+        const taskId = event.dataTransfer.getData("text/atlas-task") || event.dataTransfer.getData("text/plain");
+        if (taskId) onDropTask?.(taskId);
+      }}
+      className={cn(
+        "flex min-h-0 min-w-0 flex-col overflow-hidden rounded-hud border border-grid bg-panel/60 transition-colors duration-100",
+        dropTarget && "border-flow/40",
+        over && "border-flow bg-flow-tint/30",
+        className,
+      )}
     >
       <ColumnHeader
         label={label}

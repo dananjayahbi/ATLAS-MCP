@@ -77,6 +77,8 @@ class AuditEvent(models.TextChoices):
     """Allowed `event` values in `project_audit.log` (Doc 01 §6.8)."""
 
     PROJECT_CREATED = "PROJECT_CREATED", "Project created"
+    PROJECT_ARCHIVED = "PROJECT_ARCHIVED", "Project archived"
+    PROJECT_RESTORED = "PROJECT_RESTORED", "Project restored"
     TASK_CREATED = "TASK_CREATED", "Task created"
     TASK_STATUS = "TASK_STATUS", "Task status"
     TASK_PRIORITY = "TASK_PRIORITY", "Task priority"

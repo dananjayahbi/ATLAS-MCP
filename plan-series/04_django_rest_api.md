@@ -48,9 +48,11 @@ urlpatterns = [
 | GET | `/projects/{slug}/tasks/` | `TaskListCreate` | Board list (filters + pagination) |
 | POST | `/projects/{slug}/tasks/` | `TaskListCreate` | Create task (+ DoD) |
 | GET | `/tasks/{task_id}/` | `TaskDetail` | Full detail DTO |
-| PATCH | `/tasks/{task_id}/` | `TaskDetail` | Title / description / DoD append |
+| PATCH | `/tasks/{task_id}/` | `TaskDetail` | Title / description / priority / blocked_by / DoD replace |
 | PATCH | `/tasks/{task_id}/priority/` | `TaskPriority` | Priority slider (0–100) |
-| DELETE | `/tasks/{task_id}/` | `TaskDetail` | Archive (soft) → `REJECTED` |
+| PATCH | `/tasks/{task_id}/status/` | `TaskStatus` | Operator status override (guard table §8, Doc 01) |
+| PATCH | `/tasks/{task_id}/assignee/` | `TaskAssignee` | Relabel the owner of an unleased task |
+| DELETE | `/tasks/{task_id}/` | `TaskDetail` | Hard delete while untouched; `409` once claimed |
 | PATCH | `/tasks/{task_id}/dod/{item_id}/` | `TaskDodItem` | Toggle a checklist item |
 | POST | `/tasks/{task_id}/force-release/` | `TaskForceRelease` | Reclaim from a wedged agent (T11) |
 | POST | `/tasks/{task_id}/requeue/` | `TaskRequeue` | `REJECTED` → `PENDING` (T13) |
@@ -65,6 +67,9 @@ urlpatterns = [
 | POST | `/assets/` | `AssetUpload` | Multipart upload (Doc 02 §10) |
 | GET | `/assets/{asset_id}/content` | `AssetContent` | Inline bytes (images) |
 | GET | `/assets/{asset_id}/download` | `AssetContent` | `Content-Disposition: attachment` |
+| GET | `/assets/{asset_id}/annotation/` | `AssetAnnotation` | Stored stroke side-car for a screenshot |
+| POST | `/assets/{asset_id}/annotation/` | `AssetAnnotation` | Burn-in: flattened PNG + stroke document |
+| GET | `/projects/{slug}/assets/` | `ProjectAssetPreview` | Board thumbnails: ≤ 3 images per task |
 | GET | `/telemetry/summary` | `TelemetrySummary` | HUD header numbers |
 | GET | `/priority-matrix` | `PriorityMatrix` | Scatter points (`?x=age_hours\|dependency_weight`) |
 | GET | `/stream/events` | `sse.project_events` | Doc 09 |
@@ -198,10 +203,11 @@ def get_dependency_weight(self, obj) -> float:
 | Endpoint | Behaviour |
 | :--- | :--- |
 | `POST /projects/` | Validate slug (`^[a-z][a-z0-9-]{1,31}$`, unique), path absolute string, create row, `scaffold_task`-style project scaffold (`project_meta.json` + `project_audit.log`), audit `PROJECT_CREATED`. |
-| `PATCH /projects/{slug}/` | Only `name`, `global_rules_md`, `accent_color`, `archived_at`. `slug` and `local_repo_path` are `read_only` after creation (Doc 02 D7). |
+| `PATCH /projects/{slug}/` | Only `name`, `global_rules_md`, `accent_color`. `slug` and `local_repo_path` are `read_only` after creation (Doc 02 D7). |
+| `POST /projects/{slug}/archive/` | `{"archived": bool}`, omitted body toggles. Audit `PROJECT_ARCHIVED` / `PROJECT_RESTORED`. |
 | `GET /projects/` | `annotate` counters in a single query; `health_percent` from §6.9 of Doc 01. |
 
-Archiving a project hides it from `claim_next_task` (Doc 02 `eligible_for_claim` filters `archived_at__isnull=True`) but keeps everything readable.
+Archiving a project hides it from `claim_next_task` (Doc 02 `eligible_for_claim` filters `archived_at__isnull=True`) **and** from `claim_specific_task` (T14) — otherwise `claim-for-agent` would be a hole in the archive. Everything stays readable, and `restore` clears `archived_at`.
 
 ### 5.2 Tasks — create & list
 
@@ -236,6 +242,29 @@ Idempotent; emits `task.priority_changed`; audit `TASK_PRIORITY`. The UI debounc
 ### 5.4 DoD toggle
 
 `PATCH /tasks/{id}/dod/{item_id}/` body `{"completed": bool}`. `item_id` is the **`order_index`**. Returns `{"item": {...}, "dod_progress_percent": 66}`. Human toggles set `completed_by_agent = null`; agent toggles go through `/internal/v1/dod` and record the agent id.
+
+### 5.4a Operator edits — title, status, assignee, delete
+
+Four routes let a human correct a task without touching storage. All of them
+delegate to `core/services/tasks.py`; none of them write a status directly.
+
+| Endpoint | Body | Guard |
+| :--- | :--- | :--- |
+| `PATCH /tasks/{id}/` | subset of `title`, `description`, `priority`, `blocked_by`, `dod_items` | `status != COMPLETED` (`TASK_IMMUTABLE`) |
+| `PATCH /tasks/{id}/status/` | `{"status": "<TASK_STATUS>", "note"?: string}` | target must exist in the §8 guard table |
+| `PATCH /tasks/{id}/assignee/` | `{"assigned_agent_id": "<string or null>"}` | `lease_id is null` |
+| `DELETE /tasks/{id}/` | — | `PENDING`/`REJECTED`, `attempt_count == 0`, no lease, no submission, **no assets** |
+
+`PATCH` routes `priority` through `set_priority` rather than assigning the column,
+so `task.priority_changed` still fires and the HUD's matrix stays in step with the
+slider. `dod_items` **replaces** the checklist, preserving `completed` by matching
+label — rewriting a typo must not silently un-tick work an agent already did.
+
+`DELETE` is a real delete, not the `archived_at` soft-archive the early draft
+implied: an operator who has not even claimed a task expects the row gone. It is
+fenced on all five conditions above because deleting a claimed or evidenced task
+would orphan an agent's work and its storage. Anything further along returns
+`409 TASK_IMMUTABLE` and points at `requeue` / `archive`.
 
 ### 5.5 Force release / requeue
 
@@ -290,6 +319,21 @@ class AssetUpload(APIView):
 ```
 
 `GET /assets/{id}/content` streams the file in 64 kB chunks with `Content-Type` from the row, `ETag: sha256`, `Cache-Control: private, max-age=31536000, immutable` (content-addressed, so immutable is correct). `download` adds `Content-Disposition: attachment; filename="…"`.
+
+**Screenshot markup.** `POST /assets/{id}/annotation/` takes a multipart body of
+`image` (the flattened PNG), `document` (the stroke JSON), and `replace_source`
+(`1`/`0`). It always appends a **new** `ANNOTATED_CANVAS` row — evidence is
+append-only — and writes the stroke document as `<stem>.canvas.json` beside the
+flattened image, so the markup stays re-editable. When `replace_source=1` the
+source asset's bytes are rewritten in place and its `sha256` recomputed, which
+keeps every existing link and every `content` URL valid; the previous revision
+survives as the `ANNOTATED_CANVAS` row. `GET` returns the side-car or `null`.
+
+`GET /projects/{slug}/assets/` returns `[{task_id, images[], total}]` with at most
+`PREVIEWS_PER_TASK = 3` images per task and the **true** total alongside, so the
+board can render a "+2" badge without a second query. This exists as its own
+route because `TaskSummaryDTO` is frozen at its projection budget (Doc 01 §7.3)
+and must not grow an `assets` array.
 
 ### 5.9 Telemetry & matrix
 
@@ -413,15 +457,16 @@ Enforced by `django_assert_num_queries` in the API test suite (Doc 10). Regressi
 | Area | Cases |
 | :--- | :--- |
 | Auth | missing token 401, bad token 401, valid token 200, internal missing `X-ATLAS-Agent` 400 |
-| Projects | create/duplicate-slug 400, slug immutable on PATCH, archive hides from claim |
+| Projects | create/duplicate-slug 400, slug immutable on PATCH, archive hides from claim, archive hides from `claim-for-agent`, restore re-enables both |
 | Tasks | create with DoD, 41 DoD items 400, blocked_by cross-project 400, cycle 409 |
-| Priority | 0 and 100 accepted, -1 and 101 rejected, idempotent repeat |
+| Operator edits | PATCH each whitelisted field, PATCH on COMPLETED 409, `dod_items` replace keeps completed by label, status override per guard table, status override to a forbidden target 409, assignee change while leased 409, DELETE on a claimed task 409, DELETE with assets 409 |
+| Priority | 0 and 100 accepted, -1 and 101 rejected, idempotent repeat, PATCH emits `task.priority_changed` |
 | DoD | toggle on/off, item_id mismatch 404, progress percent correct |
 | Discovery | approve sets priority, approve twice 409, reject then requeue |
 | Review | approve without 100 % DoD succeeds, reject without notes 400, reject clears lease |
 | Claim | no tasks → 2-field response, lowest eligibility respected, `min_priority` filter |
 | Submit | oversized patch 413, stale lease 409, rollback leaves no Asset row |
-| Assets | oversize 413, wrong MIME 415, dedupe by sha256, content ETag |
+| Assets | oversize 413, wrong MIME 415, dedupe by sha256, content ETag, annotation appends a new row, `replace_source` rewrites the source bytes, annotation side-car round-trips, previews cap at 3 with a true total |
 | Matrix | both x modes, cap at 500, blocked flag correct |
 | Errors | every §15 code has an assertion for shape + status + `request_id` |
 | Budgets | query counts per §9 |
@@ -437,6 +482,7 @@ Enforced by `django_assert_num_queries` in the API test suite (Doc 10). Regressi
 - [ ] Uploads stream, sniff MIME, dedupe by sha256, and never buffer > 1 MB in memory.
 - [ ] Query budgets from §9 hold under test.
 - [ ] No view contains business rules; all transitions go through `core/services`.
+- [ ] Operator mutations (`PATCH`, `DELETE`, `status`, `assignee`, `archive`) reuse the same service functions the MCP path uses, so a transition cannot be reachable from REST but forbidden from MCP (or vice versa).
 - [ ] `GET /healthz` exposes the Doc 03 `StartupReport` and requires no auth.
 
 ---

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { errorMessage } from "@/lib/api/errors";
 import { useCreateTask } from "@/lib/api/queries";
 import type { TaskCreateBody } from "@/lib/api/tasks";
+import { useAttachmentUpload } from "@/hooks/use-attachment-upload";
 import { toast } from "@/hooks/use-toast";
 import { clampPriority } from "@/lib/format/priority";
 import type { TaskSummaryDTO } from "@/lib/types/api";
@@ -12,10 +13,15 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { TextAreaField, TextField } from "@/components/ui/field";
 import { Kbd } from "@/components/ui/kbd";
+import { UploadDropzone } from "@/components/tasks/upload-dropzone";
 
 /**
  * Doc 04 §5.2 `POST /projects/{slug}/tasks/` — the only human task-creation path.
  * DoD lines are one-per-line so the textarea maps 1:1 to `dod_items[]`.
+ *
+ * Attachments are uploaded *after* the task exists (an asset needs a task id),
+ * so a failed upload leaves a created task with a warning rather than a
+ * half-created task with orphaned bytes.
  */
 
 export type CreateTaskDialogProps = {
@@ -40,11 +46,13 @@ export function CreateTaskDialog({
   defaultPriority = 50,
 }: CreateTaskDialogProps) {
   const create = useCreateTask();
+  const attachments = useAttachmentUpload();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState(defaultPriority);
   const [dod, setDod] = useState("");
   const [blockedBy, setBlockedBy] = useState<string[]>([]);
+  const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [attempted, setAttempted] = useState(false);
 
@@ -63,6 +71,7 @@ export function CreateTaskDialog({
     setPriority(defaultPriority);
     setDod("");
     setBlockedBy([]);
+    setFiles([]);
     setError(null);
     setAttempted(false);
   };
@@ -79,7 +88,23 @@ export function CreateTaskDialog({
     };
     try {
       const task = await create.mutateAsync({ slug, body });
-      toast({ level: "info", title: `Task created: ${task.title}` });
+      let uploaded = 0;
+      if (files.length > 0) {
+        const result = await attachments.upload(task.id, files);
+        uploaded = result.done;
+        if (result.failed.length > 0) {
+          toast({
+            level: "warn",
+            title: `Task created; ${result.failed.length} image(s) failed`,
+            body: result.failed.join(" · "),
+          });
+        }
+      }
+      toast({
+        level: "info",
+        title: `Task created: ${task.title}`,
+        body: uploaded > 0 ? `${uploaded} image(s) attached` : undefined,
+      });
       onCreated?.(task);
       reset();
       onClose();
@@ -88,17 +113,19 @@ export function CreateTaskDialog({
     }
   };
 
+  const busy = create.isPending || attachments.uploading;
+
   return (
     <Dialog
       open={open}
       title="New task"
       description={`${slug} · creates a PENDING task with a DoD checklist`}
       onClose={() => {
-        if (create.isPending) return;
+        if (busy) return;
         reset();
         onClose();
       }}
-      busy={create.isPending}
+      busy={busy}
       footer={
         <>
           <Button
@@ -107,15 +134,16 @@ export function CreateTaskDialog({
               reset();
               onClose();
             }}
-            disabled={create.isPending}
+            disabled={busy}
           >
             Cancel <Kbd size="xs">Esc</Kbd>
           </Button>
-          <Button size="sm" variant="primary" onClick={() => void submit()} loading={create.isPending}>
+          <Button size="sm" variant="primary" onClick={() => void submit()} loading={busy}>
             Create task <Kbd size="xs">⌘↵</Kbd>
           </Button>
         </>
       }
+      width="lg"
     >
       <form
         className="flex flex-col gap-2"
@@ -185,6 +213,13 @@ export function CreateTaskDialog({
           onChange={(event) => setDod(event.target.value)}
           placeholder={"One item per line\nRace reproduced under load\nRegression test added"}
           hint={dodItems.length > 0 ? `${dodItems.length} checklist item(s)` : "Optional — one item per line"}
+        />
+
+        <UploadDropzone
+          files={files}
+          onChange={setFiles}
+          disabled={busy}
+          hint="Screenshots the agent should see — drag & drop, or browse"
         />
 
         {candidates.length > 0 ? (

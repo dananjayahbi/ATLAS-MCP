@@ -12,7 +12,18 @@ urlpatterns = [
     path("projects/<slug:slug>/", projects.ProjectDetailView.as_view(), name="project-detail"),
     # Tasks
     path("projects/<slug:slug>/tasks/", tasks.TaskListView.as_view(), name="task-list"),
+    path(
+        "projects/<slug:slug>/archive/",
+        projects.ProjectArchiveView.as_view(),
+        name="project-archive",
+    ),
     path("tasks/<uuid:task_id>/", tasks.TaskDetailView.as_view(), name="task-detail"),
+    path("tasks/<uuid:task_id>/status/", tasks.TaskStatusView.as_view(), name="task-status"),
+    path(
+        "tasks/<uuid:task_id>/assignee/",
+        tasks.TaskAssigneeView.as_view(),
+        name="task-assignee",
+    ),
     path("tasks/<uuid:task_id>/priority/", tasks.TaskPriorityView.as_view(), name="task-priority"),
     path(
         "tasks/<uuid:task_id>/dod/<int:item_id>/",
@@ -58,7 +69,17 @@ urlpatterns = [
     ),
     # Assets
     path("assets/", assets.AssetUploadView.as_view(), name="asset-upload"),
+    path(
+        "projects/<slug:slug>/assets/",
+        assets.ProjectAssetPreviewView.as_view(),
+        name="project-asset-preview",
+    ),
     path("assets/<uuid:asset_id>/", assets.AssetDetailView.as_view(), name="asset-detail"),
+    path(
+        "assets/<uuid:asset_id>/annotation/",
+        assets.AssetAnnotationView.as_view(),
+        name="asset-annotation",
+    ),
     path(
         "assets/<uuid:asset_id>/content",
         assets.AssetContentView.as_view(),

@@ -7,7 +7,14 @@ import {
   setPriority,
   toggleDodItem,
 } from "./mock-handlers";
-import { clone, db, detailFor, listOf, pickMatrix, stripDetail, syncCounters } from "./mock-store";
+import {
+  setAssignee,
+  setStatus,
+  updateProject,
+  updateTaskDetail,
+} from "./mock-handlers-edit";
+import { clone, db, detailFor, listOf, pickMatrix, syncCounters } from "./mock-store";
+import type { TaskStatus } from "@/lib/types/enums";
 
 /**
  * Resolves a `/api/v1/...` request against the fixture pack. Throws `ApiError`
@@ -20,7 +27,10 @@ type Route =
   | { kind: "projects" }
   | { kind: "project"; params: [string] }
   | { kind: "projectTasks"; params: [string] }
+  | { kind: "projectArchive"; params: [string] }
   | { kind: "task"; params: [string] }
+  | { kind: "status"; params: [string] }
+  | { kind: "assignee"; params: [string] }
   | { kind: "priority"; params: [string] }
   | { kind: "dod"; params: [string, string] }
   | { kind: "taskAction"; params: [string, string] }
@@ -37,8 +47,11 @@ const decode = (value: string | undefined): string => decodeURIComponent(value ?
 function matchRoute(path: string): Route {
   let m: RegExpMatchArray | null;
   if (path === "/projects") return { kind: "projects" };
+  if ((m = path.match(/^\/projects\/([^/]+)\/archive$/))) return { kind: "projectArchive", params: [decode(m[1])] };
   if ((m = path.match(/^\/projects\/([^/]+)$/))) return { kind: "project", params: [decode(m[1])] };
   if ((m = path.match(/^\/projects\/([^/]+)\/tasks$/))) return { kind: "projectTasks", params: [decode(m[1])] };
+  if ((m = path.match(/^\/tasks\/([^/]+)\/status$/))) return { kind: "status", params: [decode(m[1])] };
+  if ((m = path.match(/^\/tasks\/([^/]+)\/assignee$/))) return { kind: "assignee", params: [decode(m[1])] };
   if ((m = path.match(/^\/tasks\/([^/]+)\/priority$/))) return { kind: "priority", params: [decode(m[1])] };
   if ((m = path.match(/^\/tasks\/([^/]+)\/dod\/([^/]+)$/))) {
     return { kind: "dod", params: [decode(m[1]), decode(m[2])] };
@@ -73,7 +86,14 @@ export function resolveMockRequest<T>(url: string, method: string, body?: unknow
     case "project": {
       const project = db.projects.find((entry) => entry.slug === route.params[0]);
       if (!project) throw new ApiError("PROJECT_NOT_FOUND", 404, "Project no longer exists");
-      if (verb === "PATCH") Object.assign(project, payload);
+      if (verb === "PATCH") updateProject(project, payload);
+      return clone(project) as T;
+    }
+    case "projectArchive": {
+      const project = db.projects.find((entry) => entry.slug === route.params[0]);
+      if (!project) throw new ApiError("PROJECT_NOT_FOUND", 404, "Project no longer exists");
+      const archived = typeof payload?.archived === "boolean" ? payload.archived : project.archived_at === null;
+      project.archived_at = archived ? new Date().toISOString() : null;
       return clone(project) as T;
     }
     case "projectTasks": {
@@ -85,13 +105,25 @@ export function resolveMockRequest<T>(url: string, method: string, body?: unknow
       const id = route.params[0];
       const detail = detailFor(id);
       if (!detail) throw new ApiError("TASK_NOT_FOUND", 404, `Task ${id} no longer exists`);
-      if (verb === "PATCH") {
-        Object.assign(detail, payload);
-        db.tasks[id] = { ...db.tasks[id], ...stripDetail(detail) };
+      if (verb === "PATCH") return updateTaskDetail(id, payload) as T;
+      if (verb === "DELETE") {
+        delete db.tasks[id];
         syncCounters();
+        return undefined as T;
       }
       return clone(detail) as T;
     }
+    case "status":
+      return setStatus(
+        route.params[0],
+        String(payload?.status ?? "") as TaskStatus,
+        String(payload?.note ?? ""),
+      ) as T;
+    case "assignee":
+      return setAssignee(
+        route.params[0],
+        typeof payload?.assigned_agent_id === "string" ? payload.assigned_agent_id : null,
+      ) as T;
     case "priority":
       return setPriority(route.params[0], Number(payload?.priority ?? 0)) as T;
     case "dod":

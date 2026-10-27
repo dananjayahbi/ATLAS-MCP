@@ -97,12 +97,66 @@ class TaskDetailView(AtlasAPIView):
 
     def patch(self, request, task_id: str):
         payload = body(request)
-        task = task_service.get_task(task_id)
+        editable = {"title", "description", "priority", "blocked_by", "dod_items"}
+        unknown = sorted(set(payload) - editable)
+        if unknown:
+            raise ValidationError(
+                f"Only {', '.join(sorted(editable))} can be patched here.",
+                detail={"fields": unknown},
+            )
+
+        # Priority has its own transition (T-priority, `task.priority_changed`);
+        # routing it through the generic updater would hide that event.
         if "priority" in payload:
             priority = optional_int(payload, "priority")
             if priority is None:
                 raise ValidationError("priority is required.", detail={"field": "priority"})
-            task = task_service.set_priority(task_id=task.pk, priority=priority)
+            task_service.set_priority(task_id=task_id, priority=priority)
+
+        dod_items = payload.get("dod_items")
+        if dod_items is not None and not isinstance(dod_items, list):
+            raise ValidationError("dod_items must be an array of strings.",
+                                  detail={"field": "dod_items"})
+
+        task = task_service.update_task(
+            task_id=task_id,
+            title=payload.get("title"),
+            description=payload.get("description"),
+            blocked_by_ids=payload.get("blocked_by"),
+            dod_items=dod_items,
+        )
+        return Response(_detail(_load_detail(task.pk)))
+
+    def delete(self, request, task_id: str):
+        task_service.delete_task(task_id=task_id)
+        return Response(status=204)
+
+
+class TaskStatusView(AtlasAPIView):
+    """Manual status override — Doc 01 §8 kept as the single guard table."""
+
+    def patch(self, request, task_id: str):
+        payload = body(request)
+        task = task_service.set_status(
+            task_id=task_id,
+            to=require_field(payload, "status"),
+            note=optional_str(payload, "note", ""),
+        )
+        return Response(_detail(_load_detail(task.pk)))
+
+
+class TaskAssigneeView(AtlasAPIView):
+    """Bind a queued task to an agent without granting a lease (T14 does that)."""
+
+    def patch(self, request, task_id: str):
+        payload = body(request)
+        if "assigned_agent_id" not in payload:
+            raise ValidationError("assigned_agent_id is required.",
+                                  detail={"field": "assigned_agent_id"})
+        task = task_service.set_assignee(
+            task_id=task_id,
+            agent_identifier=payload.get("assigned_agent_id"),
+        )
         return Response(_detail(_load_detail(task.pk)))
 
 

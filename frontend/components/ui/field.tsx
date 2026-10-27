@@ -48,7 +48,7 @@ export type TextFieldProps = Omit<InputHTMLAttributes<HTMLInputElement>, "id"> &
   fieldClassName?: string;
 };
 
-export function TextField({ id, label, hint, error, required, fieldClassName, className, ...rest }: TextFieldProps) {
+export function TextField({ id, label, hint, error, required, fieldClassName, className, autoFocus, ...rest }: TextFieldProps) {
   const fallback = useId();
   const inputId = id ?? `field-${fallback}`;
   return (
@@ -57,6 +57,10 @@ export function TextField({ id, label, hint, error, required, fieldClassName, cl
         {...rest}
         id={inputId}
         required={required}
+        autoFocus={autoFocus}
+        // The dialog focuses `[data-autofocus]` first; React's own `autoFocus`
+        // fires before the dialog mounts its panel.
+        data-autofocus={autoFocus ? "" : undefined}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? `${inputId}-error` : undefined}
         className={cn(FIELD, error && "border-critical/60", className)}

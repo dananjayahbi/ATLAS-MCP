@@ -397,6 +397,208 @@ def requeue_task(*, task_id, actor: str = "human") -> Task:
 # ---------------------------------------------------------------------------
 # Priority / DoD / log / subtask
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Human edits: metadata, manual status, dependency rewiring
+# ---------------------------------------------------------------------------
+EDITABLE_FIELDS = ("title", "description", "priority")
+
+
+def _assert_edit_lock(task: Task, action: str) -> None:
+    """Completed work is evidence, not a draft — editing it would rewrite history."""
+    if task.status == TaskStatus.COMPLETED:
+        raise InvalidTransition(task.status, action)
+
+
+@transaction.atomic
+def update_task(
+    *,
+    task_id,
+    title: str | None = None,
+    description: str | None = None,
+    priority: int | None = None,
+    blocked_by_ids: Iterable[str] | None = None,
+    dod_items: Iterable[str] | None = None,
+    actor: str = "human",
+) -> Task:
+    """`PATCH /tasks/{id}/` — metadata, dependencies and the DoD checklist.
+
+    Status is deliberately absent: it has its own route so the guard table
+    (Doc 01 §8) keeps exactly one implementation per transition.
+    """
+    task = get_task(task_id)
+    _assert_edit_lock(task, "update_task")
+
+    changes: dict[str, Any] = {}
+    if title is not None:
+        _assert_text(title, "title", 200)
+        changes["title"] = title.strip()
+    if description is not None:
+        _assert_text(description, "description", 20_000)
+        changes["description"] = description
+    if priority is not None:
+        _assert_priority(priority)
+        changes["priority"] = priority
+
+    if changes:
+        changes["updated_at"] = utcnow()
+        Task.objects.filter(pk=task.pk).update(**changes)
+        task.refresh_from_db()
+
+    if blocked_by_ids is not None:
+        set_blockers(task_id=task.pk, blocked_by_ids=blocked_by_ids, actor=actor)
+        task.refresh_from_db()
+
+    if dod_items is not None:
+        _replace_checklist(task, dod_items)
+
+    if changes or dod_items is not None:
+        audit(project=task.project, event=AuditEvent.TASK_STATUS, task_id=task.pk,
+              actor=actor, detail={"edited": sorted(changes) or ["definition_of_done"]})
+        emit(project=task.project, task=task, type=EventType.TASK_UPDATED,
+             message=f"Task updated: {task.title}")
+    return task
+
+
+@transaction.atomic
+def _replace_checklist(task: Task, items: Iterable[str]) -> None:
+    """Rewrite the DoD while preserving completion of untouched labels.
+
+    Toggling completion is the auditable event (`dod_toggle`), so a rewrite
+    keeps the flag for every label that survives instead of resetting progress
+    the operator never meant to touch.
+    """
+    labels = [str(i).strip()[:200] for i in items if str(i).strip()]
+    if not labels:
+        raise ValidationError("definition_of_done cannot be empty.",
+                              detail={"field": "dod_items"})
+    if len(labels) > 50:
+        raise ValidationError("definition_of_done is capped at 50 items.",
+                              detail={"field": "dod_items", "max": 50})
+
+    existing = {item.label: item for item in task.checklist.all()}
+    keep = []
+    for index, label in enumerate(labels, 1):
+        previous = existing.get(label)
+        keep.append(
+            ChecklistItem(
+                task=task,
+                order_index=index,
+                label=label,
+                completed=previous.completed if previous else False,
+                completed_at=previous.completed_at if previous else None,
+                completed_by_agent=previous.completed_by_agent if previous else None,
+            )
+        )
+
+    # The unique (task, order_index) constraint blocks an in-place renumber, so
+    # the old rows go first inside the same transaction.
+    task.checklist.all().delete()
+    ChecklistItem.objects.bulk_create(keep)
+    task.refresh_from_db()
+
+
+@transaction.atomic
+def set_status(*, task_id, to: str, note: str = "", actor: str = "human") -> Task:
+    """Explicit human override of status.
+
+    Only the transitions a human is allowed to drive directly are reachable here;
+    everything else must go through its dedicated action so the guard table
+    (Doc 01 §8) keeps exactly one implementation per transition.
+    """
+    task = get_task(task_id)
+    current = task.status
+    if to not in TaskStatus.values:
+        raise ValidationError("Unknown status.", detail={"field": "to", "value": to})
+    if to == current:
+        raise InvalidTransition(current, f"set_status:{to}", "Task is already in that status.")
+
+    # T12 / T13 / T11 — the reversible human moves.
+    if to == TaskStatus.REJECTED:
+        return archive_task(task_id=task.pk, actor=actor)
+    if to == TaskStatus.PENDING and current == TaskStatus.REJECTED:
+        return requeue_task(task_id=task.pk, actor=actor)
+    if to == TaskStatus.PENDING and current == TaskStatus.IN_PROGRESS:
+        return leases.release(task_id=task.pk, actor=actor, reason="manual_release")
+    # T8 / T9 — review decisions keep their notes contract.
+    if to == TaskStatus.COMPLETED:
+        return approve_review(task_id=task.pk, note=note, actor=actor)
+    if to == TaskStatus.PENDING and current == TaskStatus.IN_REVIEW:
+        return reject_review(task_id=task.pk, note=note or "Reopened by operator.", actor=actor)
+    # T5 / T14 — an operator may hand a queued task to an agent.
+    if to == TaskStatus.IN_PROGRESS and current == TaskStatus.PENDING:
+        agent = task.assigned_agent_id or _default_agent_identifier()
+        leases.claim_specific_task(task_id=task.pk, agent_identifier=agent)
+        return get_task(task.pk)
+
+    raise InvalidTransition(current, f"set_status:{to}")
+
+
+@transaction.atomic
+def set_assignee(*, task_id, agent_identifier: str | None, actor: str = "human") -> Task:
+    """Manual assignee override.
+
+    A lease is what actually claims work; `assigned_agent_id` alone is a hint.
+    Rebinding a task that is already `IN_PROGRESS` is therefore refused unless
+    the operator releases it first, otherwise two agents would believe they own
+    the same row.
+    """
+    task = get_task(task_id)
+    value = (agent_identifier or "").strip() or None
+    if task.status == TaskStatus.IN_PROGRESS and task.lease_id:
+        raise InvalidTransition(
+            task.status,
+            "set_assignee",
+            "Release the live lease before reassigning this task.",
+        )
+    Task.objects.filter(pk=task.pk).update(assigned_agent_id=value, updated_at=utcnow())
+    task.refresh_from_db()
+    audit(project=task.project, event=AuditEvent.TASK_STATUS, task_id=task.pk,
+          actor=actor, detail={"assigned_agent_id": value})
+    emit(project=task.project, task=task, type=EventType.TASK_UPDATED,
+         message=f"Assignee set to {value or 'unassigned'}: {task.title}",
+         payload={"assigned_agent_id": value})
+    return task
+
+
+@transaction.atomic
+def delete_task(*, task_id, actor: str = "human") -> None:
+    """Hard delete, only before any agent has touched the row.
+
+    Doc 01 §8 T12 makes `archive` the normal removal; a genuine delete exists
+    for mistakes made seconds earlier and is fenced by evidence: a task that was
+    ever claimed, submitted, or carries stored assets must be archived instead.
+    """
+    task = get_task(task_id)
+    if task.status not in (TaskStatus.PENDING, TaskStatus.REJECTED):
+        raise InvalidTransition(task.status, "delete_task")
+    if task.attempt_count > 0 or task.claimed_at or task.submitted_at:
+        raise InvalidTransition(
+            task.status,
+            "delete_task",
+            "A task that has been claimed cannot be deleted; archive it instead.",
+        )
+    if Asset.objects.filter(task=task).exists():
+        raise InvalidTransition(
+            task.status,
+            "delete_task",
+            "A task with stored assets cannot be deleted; archive it instead.",
+        )
+
+    project = task.project
+    title = task.title
+    # Emit before the row disappears: `TaskEvent.task` is SET_NULL, so the
+    # envelope's `task_id` has to be captured while the task still exists.
+    emit(project=project, task=task, type=EventType.TASK_UPDATED,
+         message=f"Task deleted: {title}", payload={"deleted": True})
+    audit(project=project, event=AuditEvent.TASK_STATUS, task_id=task.pk,
+          actor=actor, detail={"deleted": True, "title": title})
+    task.delete()
+
+
+def _default_agent_identifier() -> str:
+    return "Agent-Manual"
+
+
 @transaction.atomic
 def set_priority(*, task_id, priority: int, actor: str = "human") -> Task:
     _assert_priority(priority)

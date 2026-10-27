@@ -1,26 +1,32 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { errorMessage } from "@/lib/api/errors";
 import {
   useApproveReview,
   useForceRelease,
   useRejectReview,
   useSetPriority,
+  useSetTaskStatus,
   useTask,
   useToggleDod,
 } from "@/lib/api/queries";
+import { assetsApi } from "@/lib/api/assets";
 import { tasksApi } from "@/lib/api/tasks";
 import { toast } from "@/hooks/use-toast";
 import { useHotkeys } from "@/hooks/use-hotkeys";
 import type { AssetDTO } from "@/lib/types/enums";
 import { PageShell } from "@/components/hud/hud-frame";
 import { isImageAsset } from "@/components/tasks/attachment-chips";
+import { EditTaskDialog } from "@/components/tasks/edit-task-dialog";
+import { MarkupModal, type MarkupImageEntry } from "@/components/markup/markup-modal";
 import { TaskDetailMain } from "@/components/tasks/task-detail-main";
 import { TaskDetailSidebar } from "@/components/tasks/task-detail-sidebar";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { PriorityChip, StatusBadge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -32,14 +38,18 @@ export type TaskDetailProps = {
 };
 
 export function TaskDetail({ taskId, className }: TaskDetailProps) {
+  const router = useRouter();
   const query = useTask(taskId);
   const setPriority = useSetPriority();
+  const setStatus = useSetTaskStatus();
   const toggleDod = useToggleDod();
   const approve = useApproveReview();
   const reject = useRejectReview();
   const forceRelease = useForceRelease();
-  const [canvasAsset, setCanvasAsset] = useState<AssetDTO | null>(null);
+  const [markupAssetId, setMarkupAssetId] = useState<string | null>(null);
+  const [reviewAsset, setReviewAsset] = useState<AssetDTO | null>(null);
   const [priorityOpen, setPriorityOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const task = query.data;
@@ -47,6 +57,31 @@ export function TaskDetail({ taskId, className }: TaskDetailProps) {
   const imageAsset = useMemo(
     () => task?.assets.find((asset) => asset.kind === "INPUT_SCREENSHOT") ?? task?.assets.find(isImageAsset) ?? null,
     [task],
+  );
+
+  /**
+   * Every image on the task, in the order the markup rail shows them. The
+   * annotated copies are excluded: they are burn-in output, not a canvas you
+   * would keep marking over.
+   */
+  const markupImages: MarkupImageEntry[] = useMemo(
+    () =>
+      (task?.assets ?? [])
+        .filter((asset) => asset.mime_type.startsWith("image/") && asset.kind !== "ANNOTATED_CANVAS")
+        .map((asset) => ({
+          id: asset.id,
+          label: asset.filename,
+          url: assetsApi.contentUrl(asset.id),
+          kind: asset.kind,
+          mimeType: asset.mime_type,
+          byteSize: asset.byte_size,
+        })),
+    [task],
+  );
+
+  const openMarkup = useCallback(
+    (asset: AssetDTO) => setMarkupAssetId(asset.id),
+    [],
   );
 
   useHotkeys(
@@ -113,6 +148,9 @@ export function TaskDetail({ taskId, className }: TaskDetailProps) {
         <>
           <PriorityChip priority={task.priority} showLabel />
           <StatusBadge status={task.status} size="md" />
+          <Button size="sm" onClick={() => setEditOpen(true)}>
+            Edit
+          </Button>
           <Link
             href={`/projects/${task.project_slug}`}
             className="rounded-hud border border-grid px-2 py-1 text-hud-micro uppercase text-secondary hover:border-grid-strong hover:text-primary"
@@ -146,11 +184,12 @@ export function TaskDetail({ taskId, className }: TaskDetailProps) {
 
           <TaskDetailSidebar
             task={task}
-            canvasAsset={canvasAsset}
+            canvasAsset={reviewAsset}
             imageAsset={imageAsset}
-            onOpenCanvas={setCanvasAsset}
+            onOpenCanvas={setReviewAsset}
+            onOpenMarkup={openMarkup}
             onCloseCanvas={() => {
-              setCanvasAsset(null);
+              setReviewAsset(null);
               void query.refetch();
             }}
             priorityOpen={priorityOpen}
@@ -166,10 +205,36 @@ export function TaskDetail({ taskId, className }: TaskDetailProps) {
                 .then(() => query.refetch())
                 .catch((err: unknown) => setError(errorMessage(err)));
             }}
+            onSetStatus={(status) =>
+              setStatus.mutate(
+                { id: task.id, status, note: status === "PENDING" ? "Reopened by operator." : "" },
+                { onError: (err) => setError(errorMessage(err)) },
+              )
+            }
+            statusBusy={setStatus.isPending}
+            onAssetAdded={() => void query.refetch()}
             onError={setError}
           />
         </div>
       </div>
+
+      <MarkupModal
+        open={markupAssetId !== null}
+        taskId={task.id}
+        taskTitle={task.title}
+        assetId={markupAssetId}
+        images={markupImages}
+        onClose={() => setMarkupAssetId(null)}
+        onSaved={() => void query.refetch()}
+      />
+
+      <EditTaskDialog
+        open={editOpen}
+        task={task}
+        onClose={() => setEditOpen(false)}
+        onSaved={() => void query.refetch()}
+        onDeleted={() => router.push(`/projects/${task.project_slug}`)}
+      />
     </PageShell>
   );
 }

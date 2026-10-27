@@ -76,10 +76,13 @@ export function invalidationKeys(
   switch (type) {
     case "task.created":
       return [tasks, telemetry, matrix, project, projects];
+    // Metadata edits and assignee changes move the card between filter buckets
+    // (`agent=`, `q=`) and change project counters, so they must refresh the
+    // board, the detail, the rail, the queue and the matrix — not just the row.
     case "task.updated":
-      return [tasks, task];
+      return [tasks, task, telemetry, matrix, project, projects];
     case "task.status_changed":
-      return [tasks, task, telemetry, matrix, project];
+      return [tasks, task, telemetry, matrix, project, projects];
     case "task.priority_changed":
       return [tasks, task, matrix];
     case "task.dod_updated":

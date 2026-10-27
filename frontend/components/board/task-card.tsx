@@ -5,9 +5,10 @@ import { cn } from "@/lib/format/cn";
 import { formatAgeHours, formatCountdown, formatDuration } from "@/lib/format/duration";
 import { formatPriority } from "@/lib/format/priority";
 import { LEASE_CLASS, leaseTone, STATUS_META } from "@/lib/format/tone";
+import type { AssetPreview } from "@/lib/api/assets";
 import type { TaskSummaryDTO } from "@/lib/types/api";
-import { Badge, PriorityChip, StatusBadge } from "@/components/ui/badge";
-import { Gauge } from "@/components/ui/gauge";
+import { Badge, PriorityChip, StatusBadge } from "@/components/ui/badge";import { Gauge } from "@/components/ui/gauge";
+import { TaskThumbnailGrid } from "@/components/tasks/task-thumbnail-grid";
 
 /** Doc 06 §8.1 — one task row/card over `TaskSummaryDTO`. Never re-derives aggregates. */
 
@@ -20,6 +21,14 @@ export type TaskCardProps = {
   href?: string;
   compact?: boolean;
   className?: string;
+  /** Board thumbnails from the batched preview index (`useTaskAssetPreviews`). */
+  thumbnails?: readonly AssetPreview[];
+  thumbnailTotal?: number;
+  onOpenImage?: (taskId: string, assetId: string) => void;
+  /** Opens the edit dialog; omitted when the caller has no handler. */
+  onEdit?: (id: string) => void;
+  /** Enables HTML5 drag for status moves (board only, never the list view). */
+  draggable?: boolean;
 };
 
 function ChipRow({ task }: { task: TaskSummaryDTO }) {
@@ -51,6 +60,11 @@ export function TaskCard({
   href,
   compact = false,
   className,
+  thumbnails,
+  thumbnailTotal,
+  onOpenImage,
+  onEdit,
+  draggable = false,
 }: TaskCardProps) {
   const lease = formatCountdown(task.lease_seconds_remaining);
   const hrefTo = href ?? `/projects/${task.project_slug}/tasks/${task.id}`;
@@ -59,10 +73,23 @@ export function TaskCard({
     <article
       aria-current={active ? "true" : undefined}
       data-selected={selected || undefined}
+      data-task-id={draggable ? task.id : undefined}
+      draggable={draggable || undefined}
+      onDragStart={
+        draggable
+          ? (event) => {
+              event.dataTransfer.setData("text/atlas-task", task.id);
+              // Some browsers only expose `text/plain` to a drop handler.
+              event.dataTransfer.setData("text/plain", task.id);
+              event.dataTransfer.effectAllowed = "move";
+            }
+          : undefined
+      }
       className={cn(
         "group relative min-w-0 rounded-hud border bg-panel/80 transition-colors duration-100",
         active ? "border-flow/60" : "border-grid hover:border-grid-strong",
         selected && "bg-flow-tint/40",
+        draggable && "cursor-grab active:cursor-grabbing",
         className,
       )}
     >
@@ -92,6 +119,21 @@ export function TaskCard({
               {selected ? "✓" : ""}
             </button>
           ) : null}
+          {onEdit ? (
+            <button
+              type="button"
+              aria-label={`Edit ${task.title}`}
+              title="Edit task"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onEdit(task.id);
+              }}
+              className="ml-auto shrink-0 rounded-chip px-1 font-machine text-hud-micro text-disabled opacity-0 transition-opacity duration-100 hover:text-flow focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-flow group-hover:opacity-100"
+            >
+              edit
+            </button>
+          ) : null}
         </div>
 
         <Link
@@ -104,6 +146,14 @@ export function TaskCard({
         </Link>
 
         <Gauge value={task.dod_progress_percent} size="sm" showLabel={false} />
+
+        {thumbnails && thumbnails.length > 0 ? (
+          <TaskThumbnailGrid
+            images={thumbnails}
+            total={thumbnailTotal ?? thumbnails.length}
+            onOpen={(assetId) => onOpenImage?.(task.id, assetId)}
+          />
+        ) : null}
 
         <div className="flex min-w-0 items-center gap-2 text-hud-micro text-muted">
           <span className="font-machine tabular-nums">{formatAgeHours(task.age_hours)} old</span>

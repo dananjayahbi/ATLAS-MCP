@@ -2,14 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { usePriorityMatrix, useProject, useProjects, useTasks, useTelemetry } from "@/lib/api/queries";
+import { usePriorityMatrix, useProject, useProjects, useSetTaskStatus, useTask, useTasks, useTelemetry } from "@/lib/api/queries";
 import type { MatrixXAxis } from "@/lib/api/telemetry";
 import { useBoardFilter } from "@/hooks/use-board-filter";
 import { useBulkTasks } from "@/hooks/use-bulk-tasks";
 import { useHotkeys } from "@/hooks/use-hotkeys";
 import { rememberProject } from "@/hooks/use-last-project";
+import { useTaskAssetPreviews } from "@/hooks/use-task-asset-previews";
 import { useUrlState } from "@/hooks/use-url-state";
-import type { TaskSummaryDTO } from "@/lib/types/api";
+import type { ProjectDTO, TaskSummaryDTO } from "@/lib/types/api";
+import type { TaskStatus } from "@/lib/types/enums";
 import { PageShell } from "@/components/hud/hud-frame";
 import { TelemetryStrip } from "@/components/hud/telemetry-strip";
 import { SplitAgentWorkbench } from "@/components/board/split-agent-workbench";
@@ -17,7 +19,10 @@ import { TaskBoardView, type BoardGrouping } from "@/components/board/board-view
 import { TaskCard } from "@/components/board/task-card";
 import { WorkspaceRail } from "@/components/board/workspace-rail";
 import { PriorityMatrix } from "@/components/matrix/priority-matrix";
+import { MarkupModal, type MarkupImageEntry } from "@/components/markup/markup-modal";
+import { EditProjectDialog } from "@/components/projects/edit-project-dialog";
 import { CreateTaskDialog } from "@/components/tasks/create-task-dialog";
+import { EditTaskDialog } from "@/components/tasks/edit-task-dialog";
 import { TaskBulkBar } from "@/components/tasks/task-bulk-bar";
 import { TaskFilterBar } from "@/components/tasks/task-filter-bar";
 import { Button } from "@/components/ui/button";
@@ -55,6 +60,9 @@ export function ProjectWorkspace({ slug, className }: ProjectWorkspaceProps) {
   const [selection, setSelection] = useState<Set<string>>(() => new Set());
   const [matrixAxis, setMatrixAxis] = useState<MatrixXAxis>("age_hours");
   const [createOpen, setCreateOpen] = useState(false);
+  const [editTaskId, setEditTaskId] = useState<string | null>(null);
+  const [markup, setMarkup] = useState<{ taskId: string; assetId: string } | null>(null);
+  const [settingsProject, setSettingsProject] = useState<ProjectDTO | null>(null);
 
   const view = (searchParams.get("view") ?? "board") as View;
   // `unbounded` is only used for the filter bar's agent list and totals, so the
@@ -62,6 +70,10 @@ export function ProjectWorkspace({ slug, className }: ProjectWorkspaceProps) {
   const unbounded = useTasks(slug, {}, { kind: "board" });
   const filtered = useTasks(slug, filter, { kind: "list" });
   const matrix = usePriorityMatrix(matrixAxis);
+  const previews = useTaskAssetPreviews(slug);
+  const editing = useTask(editTaskId ?? "");
+  const setStatus = useSetTaskStatus();
+  const [dragging, setDragging] = useState<TaskStatus | null>(null);
 
   // Remember the last project so the header's Dashboard link can return here.
   useEffect(() => rememberProject(slug), [slug]);
@@ -129,6 +141,40 @@ export function ProjectWorkspace({ slug, className }: ProjectWorkspaceProps) {
     [ordered, selection],
   );
 
+  const previewFor = (taskId: string) => previews.index.get(taskId);
+
+  /**
+   * Drag-and-drop status change. The card drag sets `dragging` through the DOM
+   * `dragstart` event, which bubbles here, so a column can pre-highlight the
+   * targets the guard table will actually accept.
+   */
+  const moveTask = (taskId: string, status: TaskStatus) => {
+    setDragging(null);
+    const task = ordered.find((row) => row.id === taskId);
+    if (!task || task.status === status) return;
+    void setStatus
+      .mutateAsync({ id: taskId, status, note: status === "PENDING" ? "Reopened from the board." : "" })
+      .catch(() => {
+        /* The mutation surface renders `errorMessage`; nothing to add here. */
+      });
+  };
+
+  /** Every image on a task, so the markup rail can switch without a refetch. */
+  const markupImages: MarkupImageEntry[] = useMemo(() => {
+    const entry = markup ? previews.index.get(markup.taskId) : undefined;
+    if (!entry) return [];
+    return entry.images.map((image) => ({
+      id: image.id,
+      label: image.filename,
+      url: image.url,
+      kind: image.kind,
+      mimeType: image.mime_type,
+    }));
+  }, [markup, previews.index]);
+
+  const markupTask = markup ? ordered.find((task) => task.id === markup.taskId) ?? null : null;
+  const editingTask = editing.data ?? null;
+
   return (
     <PageShell
       title={project.data?.name ?? slug}
@@ -146,11 +192,20 @@ export function ProjectWorkspace({ slug, className }: ProjectWorkspaceProps) {
       <div className="flex min-h-0 flex-col gap-3">
         <TelemetryStrip telemetry={telemetry.data} />
 
-        <div className="grid min-h-0 gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
+        <div
+          className="grid min-h-0 gap-3 lg:grid-cols-[260px_minmax(0,1fr)]"
+          onDragStart={(event) => {
+            const id = (event.target as HTMLElement).closest("[data-task-id]")?.getAttribute("data-task-id");
+            const task = id ? ordered.find((row) => row.id === id) : null;
+            setDragging(task?.status ?? null);
+          }}
+          onDragEnd={() => setDragging(null)}
+        >
           <WorkspaceRail
             projects={projectsQuery.data?.items ?? []}
             loading={projectsQuery.isLoading}
             onCreateProject={() => router.push("/")}
+            onEditProject={setSettingsProject}
           />
 
           <div className="flex min-h-0 flex-col gap-3">
@@ -242,6 +297,9 @@ export function ProjectWorkspace({ slug, className }: ProjectWorkspaceProps) {
                           selected={selection.has(task.id)}
                           onSelect={toggleSelection}
                           onOpen={() => openTask(task)}
+                          thumbnails={previewFor(task.id)?.images}
+                          thumbnailTotal={previewFor(task.id)?.total}
+                          onOpenImage={(taskId, assetId) => setMarkup({ taskId, assetId })}
                         />
                       </li>
                     ))}
@@ -266,6 +324,11 @@ export function ProjectWorkspace({ slug, className }: ProjectWorkspaceProps) {
                     const task = ordered.find((row) => row.id === id);
                     if (task) openTask(task);
                   }}
+                  previewFor={previewFor}
+                  onOpenImage={(taskId, assetId) => setMarkup({ taskId, assetId })}
+                  onEditTask={(id) => setEditTaskId(id)}
+                  onMoveTask={moveTask}
+                  draggingStatus={dragging}
                 />
               </Panel>
             )}
@@ -306,6 +369,42 @@ export function ProjectWorkspace({ slug, className }: ProjectWorkspaceProps) {
         candidates={all.filter((task) => task.status !== "COMPLETED")}
         onCreated={(task) => router.push(`/projects/${slug}/tasks/${task.id}`)}
       />
+
+      {editingTask ? (
+        <EditTaskDialog
+          open={editTaskId !== null}
+          task={editingTask}
+          onClose={() => setEditTaskId(null)}
+          candidates={all}
+          onDeleted={() => {
+            setEditTaskId(null);
+            setSelection((prev) => {
+              const next = new Set(prev);
+              next.delete(editTaskId ?? "");
+              return next;
+            });
+          }}
+        />
+      ) : null}
+
+      <MarkupModal
+        open={markup !== null}
+        taskId={markup?.taskId ?? ""}
+        taskTitle={markupTask?.title ?? "task"}
+        assetId={markup?.assetId ?? null}
+        images={markupImages}
+        onClose={() => setMarkup(null)}
+        onSaved={() => void previews.refetch()}
+      />
+
+      {settingsProject ? (
+        <EditProjectDialog
+          open
+          project={projectsQuery.data?.items.find((row) => row.slug === settingsProject.slug) ?? settingsProject}
+          onClose={() => setSettingsProject(null)}
+          onSaved={(saved) => setSettingsProject(saved)}
+        />
+      ) : null}
     </PageShell>
   );
 }

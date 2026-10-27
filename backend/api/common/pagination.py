@@ -33,9 +33,9 @@ def decode_cursor(cursor: str | None) -> tuple[str, str, str | None] | None:
         raise ValidationError("Malformed pagination cursor.", detail={"cursor": cursor}) from None
 
 
-def resolve_page_size(raw: Any) -> int:
+def resolve_page_size(raw: Any, default: int = DEFAULT_PAGE_SIZE) -> int:
     if raw in (None, ""):
-        return DEFAULT_PAGE_SIZE
+        return default
     try:
         value = int(raw)
     except (TypeError, ValueError):
