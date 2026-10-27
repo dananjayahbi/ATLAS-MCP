@@ -53,7 +53,8 @@ urlpatterns = [
 | DELETE | `/tasks/{task_id}/` | `TaskDetail` | Archive (soft) → `REJECTED` |
 | PATCH | `/tasks/{task_id}/dod/{item_id}/` | `TaskDodItem` | Toggle a checklist item |
 | POST | `/tasks/{task_id}/force-release/` | `TaskForceRelease` | Reclaim from a wedged agent (T11) |
-| POST | `/tasks/{task_id}/requeue/` | `TaskRequeue` | `REJECTED` → `PENDING` |
+| POST | `/tasks/{task_id}/requeue/` | `TaskRequeue` | `REJECTED` → `PENDING` (T13) |
+| POST | `/tasks/{task_id}/claim-for-agent/` | `TaskClaimForAgent` | Assign one specific task to a named agent (T14); sole emitter of `TASK_ALREADY_LEASED` |
 | GET | `/tasks/{task_id}/events/` | `TaskEventList` | Paginated event history |
 | GET | `/discoveries/` | `DiscoveryList` | `PENDING_APPROVAL` inbox |
 | POST | `/discoveries/{task_id}/approve/` | `DiscoveryApprove` | T3 |
@@ -241,9 +242,12 @@ Idempotent; emits `task.priority_changed`; audit `TASK_PRIORITY`. The UI debounc
 | Endpoint | Guard | Effect |
 | :--- | :--- | :--- |
 | `force-release` | `status == IN_PROGRESS` | `leases.force_release(actor="human")` → `PENDING`; audit `LEASE_RECLAIMED` |
-| `requeue` | `status == REJECTED` | → `PENDING`, clears `review_notes`, `attempt_count` unchanged |
+| `requeue` | `status == REJECTED` and every `blocked_by` is `COMPLETED` | → `PENDING`, clears `review_notes`, `attempt_count` unchanged. A `REJECTED` blocker → `409 DEPENDENCY_UNSATISFIABLE` with the blocker in `detail` |
+| `claim-for-agent` | `status == PENDING`, not blocked, no live lease | Grants a lease to `{agent_identifier}` (T14), audit `LEASE_GRANTED` actor `human`. A live lease → `409 TASK_ALREADY_LEASED` (the **only** emitter of that code) |
 
-Both return the refreshed `TaskDetailDTO`. Neither is exposed to agents.
+Both return the refreshed `TaskDetailDTO`. None is exposed to agents.
+
+**Why `claim-for-agent` exists:** without it, `TASK_ALREADY_LEASED` is unreachable — `claim_next_task` skips leased tasks rather than conflicting, which is correct for a queue but leaves the taxonomy entry dead. T14 gives a human the ability to pin a specific task to a specific agent, which is also the only way to test the conflict path honestly.
 
 ### 5.6 Discovery triage
 

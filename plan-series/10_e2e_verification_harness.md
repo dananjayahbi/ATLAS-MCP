@@ -1,7 +1,7 @@
 # Doc 10 — End-to-End Verification & Acceptance Harness
 
 > **Series position:** 10 of 10 · **Owner:** Subagent 10 (QA & Validation)
-> **Consumes:** Doc 01 §8 (T1–T12), §11 (I1–I6), §15 (error taxonomy), §16 (fixture pack), §17 (traceability); Doc 02 §12 (D1–D8), §14; Doc 03 §7.3, §8, §9, §10; Doc 04 §9, §10; Doc 06 §15, §17; Doc 07 §15; Doc 09 §9, §15, §16.
+> **Consumes:** Doc 01 §8 (T1–T12), §11 (I1–I6), §15 (errors), §16 (fixtures), §17 (traceability); Doc 02 §12 (D1–D8), §14; Doc 03 §7.3, §8, §9, §10; Doc 04 §9, §10; Doc 06 §15, §17; Doc 07 §15; Doc 09 §9, §15, §16.
 > **Publishes:** the conformance fixture pack (§9.1), `scripts/{run_mock_agent,simulate_power_cut,verify_integrity,verify_series}.py`, `scripts/check_budgets.mjs`, `.github/workflows/atlas-ci.yml`, the acceptance report schema (§17.3).
 > **Owned paths (hard boundary):** `tests/**`, `frontend/e2e/**`, `scripts/**`, `.github/workflows/atlas-ci.yml`.
 > **Never owned:** every application path. Tests *observe*; they never patch the system under test. A failure is evidence against an owning doc, never a licence to edit `backend/`, `frontend/app/`, or `mcp_server/`.
@@ -49,36 +49,22 @@ ATLAS-MCP promises six things a user would pay for: a task is never double-claim
 
 ```
 ATLAS-MCP/
-├── tests/
-│   ├── conftest.py            # root fixtures (§3.2)
-│   ├── pytest.ini             # markers, --strict-markers, timeout, filterwarnings=error
-│   ├── fixtures/              # factories.py clock.py sse.py waiters.py images.py ids.py
-│   │   └── expected/          # golden wire payloads (§9.1)
-│   ├── unit/                  # core/ api/ mcp/   (no I/O beyond in-memory SQLite)
-│   ├── integration/           # db/ api/ sse/     (one real SQLite file per test)
-│   └── e2e/                   # conftest + test_{invariants,capabilities,multi_agent,
-│                              #   crash_recovery,mcp_conformance,api_conformance,
-│                              #   sse_stream,perf_gates}.py
-├── frontend/e2e/
-│   ├── playwright.config.ts
-│   ├── fixtures/{board,matrix,stream,triage}.fixture.ts
-│   ├── specs/{board,keyboard,matrix,triage,review,canvas,terminal,a11y}.spec.ts
-│   └── visual/{board,canvas}/ # CI-only baselines (§11.6)
-├── scripts/                   # run_mock_agent simulate_power_cut verify_integrity
-│                              #   verify_series check_budgets.mjs fault_proxy
+├── tests/  conftest.py · pytest.ini (markers, --strict-markers, timeouts)
+│   ├── fixtures/          factories clock sse waiters images ids + expected/ (golden payloads)
+│   ├── unit/              core/ api/ mcp/      — no I/O beyond in-memory SQLite
+│   ├── integration/       db/ api/ sse/        — one real SQLite file per test
+│   └── e2e/               conftest + test_{invariants,capabilities,multi_agent,crash_recovery,
+│                          mcp_conformance,api_conformance,sse_stream,perf_gates}.py
+├── frontend/e2e/          playwright.config.ts · fixtures/ · specs/{board,keyboard,matrix,
+│                          triage,review,canvas,terminal,a11y}.spec.ts · visual/ (CI baselines)
+├── scripts/               run_mock_agent simulate_power_cut verify_integrity verify_series
+│                          check_budgets.mjs fault_proxy
 └── .github/workflows/atlas-ci.yml
 ```
 
 ### 2.2 Tool per layer
 
-| Layer | Runner | Contains | Budget |
-| :--- | :--- | :--- | :--- |
-| **Unit** (`tests/unit/`) | `pytest` | projections, guards, storage router, serializers, path logic | ≤ 25 s |
-| **Integration** (`tests/integration/`) | `pytest` + `pytest-django` | one real DB file per test, DRF client, `httpx` over ASGI, SSE bus | ≤ 180 s |
-| **E2E backend** (`tests/e2e/`) | `pytest` + `httpx` | real `runserver` subprocess, real `mcp_server` over stdio, real filesystem | ≤ 300 s |
-| **Frontend unit** | `vitest` (+RTL) | hooks, formatters, canvas lib, SSE client | ≤ 40 s |
-| **Frontend E2E** (`frontend/e2e/`) | Playwright (Chromium; WebKit nightly) | assembled app against live Django + live Next | ≤ 420 s |
-| **Perf** (`test_perf_gates.py`, `check_budgets.mjs`) | pytest + node | latency, throughput, render, bundle, startup | ≤ 240 s |
+**Unit** (`tests/unit/`, `pytest` + `pytest-django`, budget ≤ 25 s): projections, guards, storage router, serializers — no I/O beyond in-memory SQLite. **Integration** (`tests/integration/`, ≤ 180 s): one real SQLite file per test, DRF client, `httpx` over ASGI, SSE bus. **E2E backend** (`tests/e2e/`, `pytest` + `httpx`, ≤ 300 s): a real `runserver` subprocess, a real `mcp_server` over stdio, the real filesystem. **Frontend** (`frontend/**/__tests__` via Vitest + RTL, ≤ 40 s; then `frontend/e2e/` via Playwright, ≤ 420 s): hooks, formatters, canvas lib, SSE client; then the assembled app against live Django and live Next. **Perf** (`test_perf_gates.py` + `check_budgets.mjs`, ≤ 240 s): latency, throughput, render, bundle, startup.
 
 ### 2.3 Layer selection and expected counts
 
@@ -125,26 +111,22 @@ The DB is a **file** under `tmp_path_factory.mktemp("db")`, function-scoped: `:m
 
 | Fixture | Scope | Yields | Contract |
 | :--- | :--- | :--- | :--- |
-| `tmp_storage_root` | function | `Path` | Patches `ATLAS_STORAGE_ROOT` env **and** setting **and** the module-level router; asserts no `*.tmp`/`*.part` at teardown. |
-| `frozen_clock` | function | `FrozenClock` | `freeze_time("2026-10-27T08:00:00Z", tick=False)`; `.advance(s)`/`.jump(s)`; restores real time. |
-| `project_factory` | function | `ProjectFactory` | `.create(slug=…, **over)`; scaffolds the project storage dir. |
+| `tmp_storage_root` | function | `Path` | Patches `ATLAS_STORAGE_ROOT` env, setting **and** router; asserts no `*.tmp`/`*.part` at teardown. |
+| `frozen_clock` | function | `FrozenClock` | `freeze_time("2026-10-27T08:00:00Z", tick=False)`; `.advance(s)` / `.jump(s)`; restores real time. |
+| `project_factory` / `checklist_factory` / `asset_factory` | function | factories | `.create(…)`; the checklist factory assigns `order_index` 1..n (wire `id`). |
 | `task_factory` | function | `TaskFactory` | `.create(project, status, priority, blocked_by, dod)`, `.create_batch(n)`. |
-| `checklist_factory` | function | `ChecklistFactory` | Rows with `order_index` 1..n (wire `id` == `order_index`). |
-| `asset_factory` | function | `AssetFactory` | `.create(task, kind, source, bytes)`, `.create_patch`, `.create_log`. |
 | `leased_task` | function | `Task` | Claims **through** `leases.claim_next_task`; never writes lease columns by hand (Doc 03 §2). |
-| `api_client` | function | `httpx.Client` | Bearer token, `base_url=http://testserver`. |
-| `internal_client` | function | `httpx.Client` | Adds `X-ATLAS-Agent`; self-checks that omitting it yields 400. |
+| `api_client` / `internal_client` | function | `httpx.Client` | Bearer token; the internal one adds `X-ATLAS-Agent` and self-checks the 400 without it. |
 | `sse_client` | function | `SSEClient` | Background reader; `.wait_for(pred, timeout)`, `.wait_for_count(n)`, `assert_no_gaps()`. |
 | `mock_agent_proc` | function | `Popen` | `run_mock_agent.py` with a seed; `.expect_exit(code, timeout)`. |
-| `live_server` | module (e2e) | `LiveServer` | Real `runserver` on an ephemeral port; `/healthz` polled until ok. |
-| `mcp_proc` | module (e2e) | `MCPClient` | Real `python -m mcp_server`, JSON-RPC over stdio. |
+| `live_server` / `mcp_proc` | module (e2e) | `LiveServer`, `MCPClient` | Real `runserver` on an ephemeral port with `/healthz` polling; real `python -m mcp_server` over stdio. |
 
 ### 3.3 Two critical fixtures, in full
 
 **`tmp_storage_root`** — a wrong root silently writes into the developer's real `storage/` and poisons every later assertion:
 
 ```python
-# tests/conftest.py (excerpt 1, 13 lines)
+# tests/conftest.py (excerpt 1)
 @pytest.fixture
 def tmp_storage_root(tmp_path, monkeypatch):
     root = tmp_path / "storage"
@@ -162,7 +144,7 @@ def tmp_storage_root(tmp_path, monkeypatch):
 **`task_factory`** — the single place that knows a task needs a folder, DoD rows and stable ids:
 
 ```python
-# tests/conftest.py (excerpt 2, 20 lines)
+# tests/conftest.py (excerpt 2)
 @pytest.fixture
 def task_factory(db, project_factory, tmp_storage_root):
     class TaskFactory:
@@ -189,37 +171,11 @@ def task_factory(db, project_factory, tmp_storage_root):
 
 ### 3.4 Environment variables
 
-| Variable | Default in tests | Set by | Effect |
-| :--- | :--- | :--- | :--- |
-| `ATLAS_ENV` | `test` | `pytest.ini` | loopback guard active; no DEBUG. |
-| `ATLAS_DB_PATH` / `ATLAS_STORAGE_ROOT` | per-test tmp | fixtures | isolation (§3.1, §3.3). |
-| `ATLAS_API_TOKEN` | `test-token-do-not-ship` | session autouse | deterministic auth. |
-| `ATLAS_DISABLE_SWEEPER` | **`1`** | session autouse unless the test uses `sweeper_on` | no background thread stealing leases mid-assertion (Doc 03 §6.1). |
-| `ATLAS_FORCE_RECOVERY` | **unset** | only `@pytest.mark.recovery` tests | Doc 03 §5.1 skips `ready()` under pytest; this flag is the sole opt-in. |
-| `ATLAS_LEASE_TTL_SECONDS` | `900` | never overridden in e2e | the frozen value is asserted (`INV-I3-02`); unit tests may patch the *constant* and must say so in the docstring. |
-| `ATLAS_FEATURE_SOUND` / `TZ` | `0` / `UTC` | Playwright env / autouse | silent CI; UTC wire timestamps. |
-
-A test needing a non-default value declares it in a fixture, never with inline `os.environ`, so `verify_series.py --print-env` can publish the matrix.
+`ATLAS_ENV=test` (loopback guard on, no DEBUG), per-test `ATLAS_DB_PATH` / `ATLAS_STORAGE_ROOT`, `ATLAS_API_TOKEN=test-token-do-not-ship` (session autouse), `TZ=UTC`, and `ATLAS_FEATURE_SOUND=0` for Playwright. `ATLAS_DISABLE_SWEEPER=1` is autouse **unless** the test requests `sweeper_on`, so no background thread steals leases mid-assertion (Doc 03 §6.1). `ATLAS_FORCE_RECOVERY` stays **unset** except for `@pytest.mark.recovery` tests, because Doc 03 §5.1 skips `ready()` under pytest and this flag is the sole opt-in. `ATLAS_LEASE_TTL_SECONDS` is never overridden in e2e — the frozen `900` is itself asserted (`INV-I3-02`); unit tests may patch the *constant* and must say so in the docstring. A test needing a non-default value declares it in a fixture, never inline `os.environ`, so `verify_series.py --print-env` can publish the matrix.
 
 ### 3.5 `live_server` (e2e shape)
 
-```python
-@pytest.fixture(scope="module")
-def live_server(tmp_path_factory):
-    root = tmp_path_factory.mktemp("live"); (root / "storage").mkdir()
-    env = {**os.environ, "ATLAS_DB_PATH": str(root / "atlas.db"), "ATLAS_ENV": "test",
-           "ATLAS_STORAGE_ROOT": str(root / "storage"), "ATLAS_API_TOKEN": TOKEN,
-           "ATLAS_DISABLE_SWEEPER": "1"}
-    subprocess.run([sys.executable, "backend/manage.py", "migrate", "--no-input"],
-                   env=env, check=True, capture_output=True)
-    port = _free_port()
-    proc = subprocess.Popen([sys.executable, "backend/manage.py", "runserver",
-                             f"127.0.0.1:{port}", "--noreload"], env=env,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    _await_health(f"http://127.0.0.1:{port}", timeout=15.0)     # 50 ms poll, event-driven
-    yield LiveServer(url=f"http://127.0.0.1:{port}", proc=proc, env=env, db=root / "atlas.db")
-    proc.terminate(); proc.wait(timeout=10)
-```
+A module-scoped fixture allocates a per-module tmp root, runs `manage.py migrate --no-input` with `ATLAS_DB_PATH` / `ATLAS_STORAGE_ROOT` / `ATLAS_API_TOKEN` / `ATLAS_DISABLE_SWEEPER=1` in the child env, picks a free port, spawns `manage.py runserver 127.0.0.1:<port> --noreload`, polls `/healthz` every 50 ms until ok (15 s cap), yields `LiveServer(url, proc, env, db)`, then `terminate()` + `wait(timeout=10)`. `mcp_proc` is the same pattern for `python -m mcp_server` over stdio.
 
 ### 3.6 Fixture hygiene
 
@@ -299,18 +255,7 @@ A missing `evidence` line is itself a failure (enforced by the `record_invariant
 
 **Invariant.** Successful claims for a task equal the distinct `lease_id`s ever issued (Doc 01 §11.1 I1).
 
-**Falsifier `INV-I1-01`:** create one `PENDING` task at `T0`; claim as `Agent-A` → `lease_1`; `advance(901)` then `reclaim_expired_tasks(actor="test")`; claim as `Agent-B` → `lease_2`; repeat twice more.
-
-```python
-assert task.attempt_count == 4
-assert len({lease_1, lease_2, lease_3, lease_4}) == 4, "a lease id was reused across claims"
-granted = [r for r in audit_events(task) if r["event"] == "LEASE_GRANTED"]
-assert len(granted) == 4
-assert {g["detail"]["lease_id"] for g in granted} == {lease_1, lease_2, lease_3, lease_4}
-assert Task.objects.get(id=task.id).lease_id == lease_4
-```
-
-Failure: `attempt_count (4) != distinct lease_ids issued (3)` — hypothesis: lease id derived from task id, or a claim retried without re-issuing.
+**Falsifier `INV-I1-01`:** create one `PENDING` task at `T0`; claim as `Agent-A` → `lease_1`; `advance(901)` then `reclaim_expired_tasks(actor="test")`; claim as `Agent-B` → `lease_2`; repeat twice more. Then assert `attempt_count == 4`, `len({lease_1..lease_4}) == 4`, that the four `LEASE_GRANTED` audit records carry exactly those four ids, and that the row's live `lease_id` is `lease_4`. **Failure message a maintainer sees:** `attempt_count (4) != distinct lease_ids issued (3)` — hypothesis: the lease id is derived from the task id, or a claim retried without re-issuing.
 
 ### 5.2 I2 — no double claim under concurrency (full test)
 
@@ -379,7 +324,7 @@ def test_parallel_claims_never_duplicate(db_file, project_factory, task_factory,
 | `INV-I3-02` | unit | read the constants | `LEASE_TTL_SECONDS == 900`, `HEARTBEAT_INTERVAL_SECONDS == 120`, `RECLAIM_GRACE_SECONDS == 60` |
 | `INV-I3-03` | e2e | 200 seeded claim/submit/reclaim cycles | `IN_PROGRESS` count == `lease_id__isnull=False` count at every sample |
 
-Failure: `UPDATE succeeded; 1 row now IN_PROGRESS with lease_id NULL` — the CHECK constraint is missing from the applied migration (Doc 02 §6 row 0002/0003).
+**Failure message:** `UPDATE succeeded; 1 row now IN_PROGRESS with lease_id NULL` — the CHECK constraint is missing from the applied migration (Doc 02 §6).
 
 ### 5.4 I4 — a stale heartbeat mutates nothing
 
@@ -391,13 +336,13 @@ Failure: `UPDATE succeeded; 1 row now IN_PROGRESS with lease_id NULL` — the CH
 | b. expired | `advance(901)`, then heartbeat with the correct id | `409`, `detail.reason == "expired"`, `lease_expires_at` unchanged |
 | c. reclaim raced the heartbeat | reclaim (→ `PENDING`), then heartbeat with the old id | `409`, status still `PENDING`, **no** new lease created |
 
-Case (c) proves the heartbeat filter includes `status=IN_PROGRESS`, so a heartbeat can never resurrect a reclaimed task without a new lease (Doc 03 §10.2). The assertion is `assert Task.objects.values().get(id=task.id) == before, "stale heartbeat mutated the row"`.
+Case (c) proves the heartbeat filter includes `status=IN_PROGRESS`, so a heartbeat can never resurrect a reclaimed task without a new lease (Doc 03 §10.2). The assertion is `assert Task.objects.values().get(id=task.id) == before, "stale heartbeat mutated the row"`; the failure message names which column moved.
 
 ### 5.5 I5 — nothing stays expired after boot
 
 **Invariant.** After boot recovery, zero tasks remain `IN_PROGRESS` with `lease_expires_at < now − 60 s` (Doc 01 §11.1 I5). `INV-I5-01` (`@pytest.mark.recovery`, `ATLAS_FORCE_RECOVERY=1`) creates 7 tasks, claims 3, forces 2 expired by `−120 s`, leaves 1 expired by `−30 s` (inside grace), then calls `on_startup()` **twice** and asserts: `EXPIRED_Q` count is 0; only `{live, grace}` remain `IN_PROGRESS`; each reclaimed task is `PENDING` with a null lease and an `execution.log` line matching `[SYSTEM CRASH DETECTED]` plus `lease {old}`; and `task.lease_expired` events number exactly **2, not 4** — the idempotency proof for a double boot.
 
-Failure: `1 task still IN_PROGRESS 120 s past expiry after on_startup()` — hypothesis: reclaim compares `lease_expires_at < now` instead of `EXPIRED_Q`, or reclaim is not idempotent.
+**Failure message:** `1 task still IN_PROGRESS 120 s past expiry after on_startup()` — hypothesis: reclaim compares `lease_expires_at < now` instead of `EXPIRED_Q`, or reclaim is not idempotent.
 
 ### 5.6 I6 — storage writes are all-or-nothing
 
@@ -410,20 +355,11 @@ Failure: `1 task still IN_PROGRESS 120 s past expiry after on_startup()` — hyp
 | `before_replace` | `core.storage.os.replace` raises | destination unchanged, temp removed |
 | `after_replace` | `_fsync_dir` raises | destination **complete** (the replace already happened) |
 
-The assertion is `dest.read_bytes() == (payload if cut == "after_replace" else b"ORIGINAL")` plus `not list(dest.parent.glob("*.tmp"))`. Failure: `destination is 5 242 880 bytes starting b"xxxx…" (partial new content)` — hypothesis: the writer targets `dest` directly, or reuses a fixed temp name. The out-of-process form (SIGKILL) is `FI-01`/`FI-02` (§7.4).
+Each case asserts `dest.read_bytes() == (payload if cut == "after_replace" else b"ORIGINAL")` and `not list(dest.parent.glob("*.tmp"))`. **Failure message:** `destination is 5 242 880 bytes starting b"xxxx…" (partial new content)` — hypothesis: the writer targets `dest` directly, or reuses a fixed temp name. The out-of-process form (SIGKILL) is `FI-01`/`FI-02` (§7.4).
 
 ### 5.7 Doc 02 rules D1–D8 (negative tests)
 
-| ID | Rule | Owner test | Assertion |
-| :--- | :--- | :--- | :--- |
-| `INV-D1-01` | `priority ∈ [0,100]` | `integration/db/test_constraints.py` | raw `priority=101` → `IntegrityError` `ck_task_priority_range`; API −1/101 → 400 |
-| `INV-D2-01` | `IN_PROGRESS ⇔ lease` | shared with `INV-I3-01` | I3 is canonical (single owner, R-2) |
-| `INV-D3-01` | checklist `order_index` unique | same file | duplicate insert → `uq_checklist_task_order` |
-| `INV-D4-01` | event `seq` unique per project | same file | duplicate `(project, seq)` → `uq_event_project_seq` |
-| `INV-D5-01` | asset `relative_path` unique | same file | duplicate path → `IntegrityError` |
-| `INV-D6-01` | DAG acyclic | `unit/core/test_guards.py` | A→B→A and self-edges raise `DependencyCycle`; a 500-deep chain does not recurse-error |
-| `INV-D7-01` | slug immutable | `integration/api/test_projects.py` | `PATCH {"slug": …}` ignored, DB unchanged |
-| `INV-D8-01` | no orphan assets | `integration/db/test_constraints.py` | delete cascades rows; folder moves to `.trash/` (not deleted) |
+`INV-D1-01` priority range: raw `priority=101` → `IntegrityError ck_task_priority_range`; API −1/101 → 400. `INV-D2-01` `IN_PROGRESS ⇔ lease` — **shared with `INV-I3-01`, which is canonical** (single owner, R-2). `INV-D3-01` duplicate checklist `order_index` → `uq_checklist_task_order`. `INV-D4-01` duplicate `(project, seq)` → `uq_event_project_seq`. `INV-D5-01` duplicate `relative_path` → `IntegrityError`. `INV-D6-01` (`unit/core/test_guards.py`) A→B→A and self-edges raise `DependencyCycle`, and a 500-deep chain does not recurse-error. `INV-D7-01` `PATCH {"slug": …}` ignored, DB unchanged. `INV-D8-01` delete cascades rows, the folder moves to `.trash/` (not deleted). D1/D3/D4/D5/D8 live in `integration/db/test_constraints.py`, D7 in `integration/api/test_projects.py`.
 
 Plus the unnamed row⇒file invariant (`X-STORAGE-01`, Doc 03 §8): for every `Asset` in a 200-task seed, `(root / relative_path).exists()`, `stat().st_size == byte_size`, `sha256(file) == row.sha256`. This is what makes the review UI trustworthy.
 
@@ -451,6 +387,8 @@ Run per release (`verify_series.py --mutate`), never in CI, each against a throw
 
 Fifteen rows: Master §6's twelve capabilities plus the three cross-cutting concerns named in Doc 01 §17. Each "Steps" cell is the test body; each "Artifacts" cell names files a reviewer opens under `artifacts/` without re-running anything.
 
+### 6.1 The matrix
+
 | # | Capability | Doc owner | Test ID | Type | Preconditions | Steps | Pass criteria | Artifacts |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **1** | Atomic claim protocol | 03 §4.2, 04 §6.2, 08 §7.1 | `CAP-01` | e2e (real `mcp_server` stdio) | project `alpha`; 10 `PENDING` tasks at priorities 51–60; `ATLAS_DISABLE_SWEEPER=1`; frozen at `T0` | 1. Spawn **20 threads** behind `Barrier(20)` — 4 with their own real MCP stdio session, 16 calling `leases.claim_next_task` in-process. 2. Each calls `claim_next_task("alpha", f"Agent-{i}")`. 3. Collect all 20 results. 4. Re-read all 10 rows. | 10 distinct non-null `task_id`s; the other 10 are exactly `{"task_id": null, "reason": "NO_ELIGIBLE_TASK"}` (2 keys, no `ok`); 10 distinct `lease_id`s matching `^lea_[0-9A-HJKMNP-TV-Z]{26}$`; every claimed row `IN_PROGRESS`, `attempt_count == 1`, `lease_expires_at == T0+900 s`; the 4 stdio sessions return the same shape as the 16 in-process calls | `cap/CAP-01/{claims.jsonl,mcp-session-*.log,timing.json}` |
@@ -459,7 +397,7 @@ Fifteen rows: Master §6's twelve capabilities plus the three cross-cutting conc
 | **4** | Subtask spawning | 04 §6.2, 08 §7.7 | `CAP-04` | e2e | `leased_task` `IN_PROGRESS` at priority 80 | 1. `POST /internal/v1/subtask {parent_task_id, title, description, priority:70}`. 2. Read the child. 3. `POST` the same title with a different description. 4. `POST` with `priority` omitted. 5. Read the parent's `child_task_ids`. 6. Claim the child while the parent is `IN_PROGRESS`. | Child has `parent_task_id == parent`, `priority == 70`, `is_agent_discovered == False`; step 3 creates a **second** distinct child (no dedupe, Doc 08 §12.1); step 4 inherits the parent's 80 (**Decision:** Master §6.4 says "inherit priority weighting"; Doc 01 is silent, so Doc 10 pins inheritance-on-omission); step 5 lists both; `SUBTASK_SPAWNED` audit per child; step 6 succeeds because Doc 01 §8 adds no implicit blocker (asserted explicitly, so a future inheritance rule breaks this test loudly) | `cap/CAP-04/{subtasks.json,audit-copy.log}` |
 | **5** | Dependency blocking (DAG) | 02 §5.2/§7.2, 04 §5.2 | `CAP-05` | e2e | A `COMPLETED`, B `PENDING`, C `PENDING` blocked by B, D `PENDING` blocked by A, E `REJECTED`, F `PENDING` blocked by E | 1. Claim 3×. 2. Assert the returned set. 3. Create a task with `blocked_by:[C]` (forming B→C→B). 4. Create a task whose `blocked_by` points into project `beta`. 5. Complete B through the review flow, then claim again. 6. Inspect F, then claim. | Steps 1–2 yield exactly `{B, D}` then null — C blocked by pending B, and F blocked by `REJECTED` E is **never** claimable (Doc 01 §8); step 3 → `409 DEPENDENCY_CYCLE`, `detail` names both ids, **no row created**; step 4 → `400 VALIDATION_ERROR` `{"blocked_by": ["must belong to project alpha"]}`; step 5 makes C claimable; step 6 leaves F `PENDING` with telemetry `blocked_unsatisfiable: 1` (**Decision:** Doc 01 says such tasks are skipped silently, so a counter is the only observable; requested from Doc 04) | `cap/CAP-05/{claims.json,dag.mmd,unsatisfiable.json}` |
 | **6** | In-app canvas annotation | 07 §15 | `CAP-06` (Playwright `canvas.spec.ts` + Vitest) | frontend 3000, Django 8000, task with a 1280×720 `INPUT_SCREENSHOT` | 1. Open the task; `O` opens the dialog. 2. Drag a rect (100,100)→(400,260). 3. Add arrow + text callout. 4. Blur region over a text-shaped fixture patch. 5. Export (`Cmd+Enter`). 6. Read the new `ANNOTATED_CANVAS` asset. 7. Decode the PNG and sample the blur region. 8. Re-open from the persisted document. | `ExportResult.sha256` present; asset `kind=ANNOTATED_CANVAS`, `source=HUMAN`, `byte_size` matches; export dimensions == `imageNaturalSize` (or crop) at any zoom (`T-EXP-01`); blur region has ≤ `(w/block)*(h/block)` distinct colours and no edge gradient above threshold (`T-BLUR-03`); re-open restores 4 strokes at `version == 1` with identical image-space geometry; a second unchanged export uploads once (`T-EXP-04`) | `cap/CAP-06/{exported.png,document.json,blur-analysis.json}`, trace |
-| **7** | Cyber HUD visual theme | 05 §9 | `CAP-07` (Playwright `visual/board`) | frontend with fixture data | 1. Snapshot `/` at 1440×900, DPR 1, fonts ready. 2. Assert computed design tokens. 3. Assert status conveyed by text **and** colour. 4. Run axe on `/`. | Pixel diff ≤ 0.1 % vs the CI-only baseline (§11.6); `--surface-canvas`, `--accent-flow` and all six `--status-*` tokens equal Doc 05's hex values; every `StatusBadge` has a text label; axe zero critical, zero serious | `visual/board/` baselines, `axe.json` |
+| **7** | Cyber HUD visual theme | 05 §9 | `CAP-07` (Playwright `visual/board`) | frontend with fixture data | 1. Snapshot `/` at 1440×900, DPR 1, fonts ready. 2. Assert computed design tokens. 3. Assert status conveyed by text **and** colour. 4. Run axe on `/`. | Pixel diff ≤ 0.1 % vs the CI-only baseline (§11.6); `--surface-0`, `--accent-cyan` and all six `--status-*` tokens equal Doc 05's hex values; every `StatusBadge` has a text label; axe zero critical, zero serious | `visual/board/` baselines, `axe.json` |
 | **8** | Split multi-agent dashboard | 06 §17 #1–#3 | `CAP-08` (Playwright `board.spec.ts`) | 2 projects, fixture tasks, URL `/?p=alpha,beta&layout=1x2` | 1. Load the URL. 2. Count panes, read labels. 3. Switch to `2x3`. 4. Push a 4 000-char line into pane 1. 5. Compare `scrollHeight` with `clientHeight`. 6. `Shift+Click` a rail card, pick slot 3. 7. Reload. | Exactly 2 panes bound to `alpha`,`beta`; `2x3` renders 6 cells with 4 `EmptyState` slots; no horizontal page scroll at 1280 px; `scrollHeight == clientHeight` (only terminals scroll); the URL gains the third slug and survives reload; `/healthz` `sse_connections == 2` (one `EventSource` per pane) | `panes.json`, `healthz-sse.json`, screenshots |
 | **9** | Live SSE terminal stream | 09 §16 | `CAP-09` | e2e + Playwright `terminal.spec.ts` | `leased_task`; `sse_client` on `/stream/tasks/{id}/log` | 1. Open the stream; assert the first bytes are `retry: 3000\n\n`. 2. `log_task_progress` ×5 (DEBUG/INFO/WARN/ERROR/INFO). 3. Collect frames. 4. Compare with `execution.log`. 5. Disconnect after frame 3 and reconnect with that `Last-Event-ID`. 6. Send a 6th message containing `\x1b[31m`. | 5 `task.log` frames in `seq` order, `event:` mirroring `data.type`, `id:` the ULID; `data` round-trips the DTO; `execution.log` holds 5 lines `HH:MM:SS LEVEL message`; reconnect delivers frames 4–5 exactly once; the 6th frame is ANSI-stripped; `task.log` never appears on the project channel | `cap/CAP-09/{frames.jsonl,execution.log,replay.json}` |
 | **10** | Keyboard-first navigation | 06 §12.1, §17 #9 | `CAP-10` (Playwright `keyboard.spec.ts`) | 12 fixture tasks, 2 panes | 1. `J`×3 then `K`×1. 2. `C`. 3. `Esc`. 4. `/`, type `jwt` (must not trigger `J`). 5. `Esc`. 6. `Shift+1`, `Shift+2`. 7. `Space` on an asset row, `Esc`. 8. `A` on `/discoveries`. 9. `?`. | Focus lands on row 3 then row 2; `C` opens the dialog with the title input focused; `Esc` restores focus to the row (not `body`); typing in search never moves selection (§12.2 rule 2); `Esc` cascades one layer per press; `Shift+1/2` focuses the pane root with a visible ring; `Space` opens the preview; `A` approves; `?` lists only current-scope bindings and every binding used here appears there (§12.4) | `focus-trace.json`, per-step screenshots |
@@ -475,37 +413,20 @@ Doc 01 §17 cites Doc 10 sections that were placeholders at freeze time. This ta
 
 | Doc 01 §17 row | Doc 01 pointer | Location here | Owning test |
 | :--- | :--- | :--- | :--- |
-| 1 Atomic claim | "§5.2 race test" | §5.2, §6.1 row 1 | `INV-I2-01`, `CAP-01` |
-| 2 DoD checklists | "§5.4" | §6.1 row 2 | `CAP-02` |
-| 3 Verification gates | "§5.5" | §6.1 row 3 | `CAP-03` |
-| 4 Subtask spawning | "§5.6" | §6.1 row 4 | `CAP-04` |
-| 5 Dependency blocking | "§5.7" | §6.1 row 5 | `CAP-05` |
-| 6 Canvas annotation | "§6" | §6.1 row 6, §11.5 | `CAP-06`, `FE-08` |
-| 7 Cyber HUD theme | "Doc 05 §9" | §6.1 row 7, §11.6 | `CAP-07` |
-| 8 Split dashboard | "§6" | §6.1 row 8, §11.2 | `CAP-08`, `FE-01/02` |
+| 1 Atomic claim | "§5.2 race test" | §5.2, §6.1 r1 | `INV-I2-01`, `CAP-01` |
+| 2 DoD checklists · 3 Verification gates · 4 Subtask spawning | "§5.4–§5.6" | §6.1 r2–r4 | `CAP-02`, `CAP-03`, `CAP-04` |
+| 5 Dependency blocking · 12 Project root detection | "§5.7, §5.10" | §6.1 r5, r12 | `CAP-05`, `CAP-12` |
+| 6 Canvas annotation · 7 Cyber HUD theme | "§6, Doc 05 §9" | §6.1 r6–r7, §11.5, §11.6 | `CAP-06`, `FE-08`, `CAP-07` |
+| 8 Split dashboard · 10 Keyboard nav · 11 Priority matrix | "§6, §6.4, §6.5" | §6.1 r8/r10/r11, §11.2, §11.3, §13.3 | `CAP-08/10/11`, `FE-01…05` |
 | 9 Live SSE stream | "§5.9" | §12 | `CAP-09`, `SSE-01…10` |
-| 10 Keyboard navigation | "§6.4" | §6.1 row 10, §11.3 | `CAP-10`, `FE-03/04` |
-| 11 Priority matrix | "§6.5" | §6.1 row 11, §13.3 | `CAP-11`, `FE-05` |
-| 12 Project root detection | "§5.10" | §6.1 row 12 | `CAP-12` |
 | — Leases & crash recovery | "§5.3, §5.8" | §5.1–§5.5, §7 | `INV-I1…I5`, `X-LEASE`, `FI-*` |
 | — Token conservation | "§5.11" | §6.1 X2, §9.4 | `X-TOKEN`, `MCP-07` |
 
 **Decision:** the gate checks the *capability → test ID* mapping, not section numbers, because numbers drift as this document is maintained.
 
-### 6.3 Coverage arithmetic and traceability
+### 6.3 Coverage arithmetic
 
-| Bucket | Count | Owning test |
-| :--- | :--- | :--- |
-| Master §6 capabilities | 12 | `CAP-01…12` |
-| Cross-cutting concerns (leases/recovery, token conservation, discovery pipeline) | 3 | `X-LEASE`, `X-TOKEN`, `X-DISCOVERY` |
-| Invariants I1–I6 / data rules D1–D8 | 6 / 8 | `INV-I*`, `INV-D*` (D2 shares I3's owner by design) |
-| Doc 01 §15 error codes | 15 (17 with the `AUTH_*` pair) | `API-13` |
-| Doc 01 §8 transitions T1–T12 | 12 | `API-14` |
-| Doc 04 §2 routes | 24 public + 8 internal | `API-01…12`, `API-15`, `API-18` |
-| Doc 09 test IDs / Doc 07 test IDs | 24 / 21 unit + 12 visual | §12.8 / Vitest + Playwright |
-| Doc 06 §17 DoD items | 14 | `CAP-07/08/10/11` + `FE-*` |
-
-An unowned row is a Doc 10 defect and fails the gate.
+Twelve `CAP-*` rows cover Master §6; three `X-*` rows cover leases/recovery, token conservation and the discovery pipeline; `INV-I1…I6` and `INV-D1…D8` cover the invariants (D2 shares I3's owner by design, per R-2); `API-13` parameterises all 15 error codes (17 with the `AUTH_*` pair); `API-14` parameterises T1–T12; `API-01…12` + `API-15` + `API-18` cover 24 public and 8 internal routes; §12.8 maps all 24 Doc 09 test IDs; Vitest and Playwright own Doc 07's 21 unit and 12 visual IDs; and `CAP-07/08/10/11` plus `FE-*` cover Doc 06's 14 DoD items. An unowned row is a Doc 10 defect and fails the gate.
 
 ---
 
@@ -535,7 +456,7 @@ python scripts/simulate_power_cut.py --db backend/data/atlas.db --storage storag
 **Why `SIGKILL`, not `SIGTERM`:** `SIGTERM` runs `finally`, `atexit` and Django's request hooks — which delete the temp file and mask the very behaviour under test.
 
 ```python
-# scripts/simulate_power_cut.py (core, 28 lines)
+# scripts/simulate_power_cut.py (writer child)
 def _writer_child(args):
     from scripts import _fault_hooks
     _fault_hooks.install(args.kill_at)                  # SIGKILLs this process at the hook
@@ -547,38 +468,15 @@ def _writer_child(args):
     patch = "diff --git a/x b/x\n" + ("+" + "x" * 120 + "\n") * (args.patch_size // 122)
     services.reviews.submit(task.id, task.lease_id, "power-cut probe", patch, "ok")
     return 4                                            # only if the hook never fired
-
-def main(argv=None):
-    args = parse(argv)
-    if args.role == "writer":
-        return _writer_child(args)
-    proc = subprocess.Popen([sys.executable, __file__, "--role", "writer", *sys.argv[1:]],
-                            env={**os.environ, "ATLAS_FAULT_HOOK": args.kill_at})
-    code = proc.wait(timeout=60)
-    report = {"kill_at": args.kill_at, "exit_code": code, "platform": platform.system(),
-              "after_restart": run_recovery_and_audit(args)}   # §7.3 auditor
-    Path(args.report).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.report).write_text(json.dumps(report, indent=2), encoding="utf-8")
-    return 0 if report["after_restart"]["ok"] else 1
 ```
 
-**Boundary safety.** Application code contains **zero** fault hooks. `scripts/_fault_hooks.py` monkeypatches `core.storage.os.replace` / `StorageRouter.write_bytes` **inside the writer child only**, gated on `ATLAS_FAULT_HOOK`. Exit codes: `0` injected and state correct, `1` audit failed, `3` nothing to claim, `4` hook never fired — and `4` is a failure, never a skip, because a vacuous test is worse than none.
+The parent spawns that child with `ATLAS_FAULT_HOOK=<kill_at>`, waits ≤ 60 s, runs the §7.3 auditor, and writes `{"kill_at","exit_code","platform","after_restart"}`. Exit codes: `0` injected and state correct, `1` audit failed, `3` nothing to claim, `4` hook never fired — and `4` is a **failure**, never a skip, because a vacuous test is worse than none.
+
+**Boundary safety.** Application code contains **zero** fault hooks. `scripts/_fault_hooks.py` monkeypatches `core.storage.os.replace` / `StorageRouter.write_bytes` **inside the writer child only**, gated on `ATLAS_FAULT_HOOK`.
 
 ### 7.2 Post-restart assertions (all scenarios)
 
-| # | Assertion | Source |
-| :--- | :--- | :--- |
-| A1 | `PRAGMA quick_check` returns exactly `["ok"]` | Doc 03 §3.3 |
-| A2 | `journal_mode=wal`, `foreign_keys=1`, `synchronous=1` | Doc 02 §3 |
-| A3 | No `*.tmp` older than **1 h** under `storage/` (young ones are legitimate in-flight writes) | Doc 03 §7.3 |
-| A4 | No zero-byte file under any `input/` or `output/` | Doc 01 §11.1 I6 |
-| A5 | Every `Asset.relative_path` resolves; `st_size == byte_size`; `sha256 == row.sha256` | `X-STORAGE-01` |
-| A6 | No `IN_PROGRESS` task with `lease_expires_at < now − 60 s` | `INV-I5-01` |
-| A7 | After `before_commit`: **zero** `Asset` rows for the abandoned patch; the file is absent or the *previous* complete version | Doc 03 §7.2 |
-| A8 | After `mid_write`/`mid_replace`: the file is absent or byte-complete; `git apply --check` fails on a truncated diff and succeeds on a complete one | Doc 03 §7.1 |
-| A9 | After `post_commit`: a retried `submit` with the same `(task_id, sha256)` returns the same body and adds no asset | Doc 01 §10 |
-| A10 | At most one `[SYSTEM CRASH DETECTED]` line per task after a double boot | Doc 03 §5.2 |
-| A11 | `project_audit.log` is valid JSONL — every line parses, no partial trailing line | Doc 02 §11 |
+**A1** `PRAGMA quick_check` returns exactly `["ok"]` (Doc 03 §3.3). **A2** `journal_mode=wal`, `foreign_keys=1`, `synchronous=1` (Doc 02 §3). **A3** No `*.tmp` older than **1 h** under `storage/` — younger ones are legitimate in-flight writes (Doc 03 §7.3). **A4** No zero-byte file under any `input/` or `output/` (I6). **A5** Every `Asset.relative_path` resolves, `st_size == byte_size`, `sha256 == row.sha256`. **A6** No `IN_PROGRESS` task with `lease_expires_at < now − 60 s`. **A7** After `before_commit`: **zero** `Asset` rows for the abandoned patch; the file is absent or the *previous* complete version (Doc 03 §7.2). **A8** After `mid_write`/`mid_replace`: the file is absent or byte-complete; `git apply --check` fails on a truncated diff and succeeds on a complete one. **A9** After `post_commit`: a retried `submit` with the same `(task_id, sha256)` returns the same body and adds no asset. **A10** At most one `[SYSTEM CRASH DETECTED]` line per task after a double boot. **A11** `project_audit.log` is valid JSONL — every line parses, no partial trailing line.
 
 **A11 matters:** a kill during `audit.record` can leave a half-line, and a malformed line breaks every downstream parser. Doc 02 §11 says audit failures are swallowed; Doc 10 additionally requires that one `write()` of a complete `line + "\n"` under 4 kB makes a torn line impossible (POSIX `O_APPEND`), and A11 is the executable proof. A torn line is filed against Doc 02.
 
@@ -607,13 +505,9 @@ Checks in order, all reported (no fail-fast): DB openability → `quick_check` �
 
 **Disk-full realism.** The monkeypatched variant exercises the guard (Doc 03 §6.2) everywhere; the loopback-volume variant produces a real `ENOSPC` from `write()` and runs Linux-nightly only. **Decision:** the portable variant is the CI gate because mounting volumes on hosted runners is unreliable; the real one is recorded as advisory.
 
-### 7.5 Backup/restore leg (`FI-08` continuation)
+### 7.5 Backup/restore leg and hygiene
 
-Seed a `.bak` by calling `maintenance.backup_if_stale(now)` with the clock 25 h in the past (`VACUUM INTO`, Doc 03 §7.4), assert it passes `quick_check`, corrupt the live DB, restore, boot. This turns Doc 03 §9's "Corrupt DB" runbook row into an executable procedure rather than prose.
-
-### 7.6 Hygiene
-
-Every scenario writes a report; every scenario ends with `finally: proc.kill(); proc.wait(timeout=10)`; scenarios run serially (`-p no:randomly`) because they share storage-root names and measure process death. `FI-01…03` need Linux `SIGKILL` semantics for the authoritative verdict — Windows runs use `TerminateProcess` and are marked `platform_variant`, acceptable only if a Linux run of the same commit is green.
+`FI-08` continues by seeding a `.bak` (`maintenance.backup_if_stale(now)` with the clock 25 h in the past, i.e. `VACUUM INTO` per Doc 03 §7.4), asserting it passes `quick_check`, corrupting the live DB, restoring, and booting — which turns Doc 03 §9's "Corrupt DB" runbook row into an executable procedure. Every scenario writes a report and ends with `finally: proc.kill(); proc.wait(timeout=10)`; scenarios run serially (`-p no:randomly`) because they share storage-root names and measure process death. `FI-01…03` need Linux `SIGKILL` semantics for the authoritative verdict — Windows runs use `TerminateProcess` and are marked `platform_variant`, acceptable only if a Linux run of the same commit is green.
 
 ---
 
@@ -771,31 +665,19 @@ assert all(Path(p).is_absolute() and Path(p).exists() for p in result["attached_
 
 The 13-byte assertion is deliberate: it catches `{"ok": true, "message": "logged"}` or any echo — precisely the leak Doc 01 §9.5 forbids.
 
-### 9.5 `MCP-04`…`MCP-06` — retry and idempotency
+### 9.5 `MCP-04`…`MCP-08` — retry, idempotency, error surface, stdio hygiene
 
 | ID | Scenario | Expected |
 | :--- | :--- | :--- |
 | `MCP-04` | fault proxy fails the first two responses with 502 | `submit_for_review` succeeds with **exactly 3** attempts; gaps `250 ms ± 50` then `750 ms ± 100`; one `ok:true` reaches the agent |
 | `MCP-05` | all three attempts fail | `BACKEND_UNAVAILABLE`, `retryable: true`, no partial DB state, ≤ 3 HTTP attempts in the stderr log |
-| `MCP-06` | identical `submit` sent twice | same body both times; exactly one `OUTPUT_PATCH` asset; `git_patch.patch` mtime unchanged on the second call |
-| `MCP-06b` | identical `propose_task` twice within 10 min | same `task_id`; one row; one `discovery.created` |
+| `MCP-06` | identical `submit` twice / identical `propose_task` twice within 10 min | same body and exactly one `OUTPUT_PATCH` asset (patch mtime unchanged); the second `propose` returns the same `task_id` with one `discovery.created` |
 | `MCP-06c` | `spawn_subtask` retried | creates **two** children (documented, Doc 08 §12.1) and the adapter's retry count for this tool is asserted `== 0` |
-| `MCP-06d` | `claim_next_task` transport failure then retry | returns a different task or null; never the same lease twice (Doc 08 §12.3) |
+| `MCP-06d` | `claim_next_task` transport failure then retry | a different task or null; never the same lease twice (Doc 08 §12.3) |
+| `MCP-08` | unknown project/task, wrong lease, 6 MB patch | `PROJECT_NOT_FOUND` / `TASK_NOT_FOUND` / `LEASE_INVALID` / `INVALID_ARGUMENT` (`detail.limit_bytes == 5_242_880`), all `retryable: false` with a `request_id` and `isError: false` |
+| stdio hygiene | 20 calls, `--debug`, stdin EOF, two parallel sessions | every stdout line parses as JSON-RPC (diagnostics on stderr only); a `--debug` echo never changes framing; EOF exits 0 within 2 s with no orphan; parallel sessions' responses match their own request ids in order |
 
 The 502s come from `scripts/fault_proxy.py` (≤ 60 lines: forwards to Django, fails the first N requests) — a *network* fault, so the real retry loop runs.
-
-### 9.6 `MCP-08` — error surface and stdio hygiene
-
-| Case | Expected |
-| :--- | :--- |
-| Unknown project / task | `PROJECT_NOT_FOUND` / `TASK_NOT_FOUND`, `retryable: false`, `request_id` present, `isError` false (JSON body, not a transport fault) |
-| Wrong lease | `LEASE_INVALID` (the adapter's mapping of 409 `STALE_LEASE`, Doc 08 §13.1), `retryable: false` |
-| 6 MB patch | `INVALID_ARGUMENT` (413 mapping, Doc 08 §6.5), `retryable: false`, `detail.limit_bytes == 5_242_880` |
-| stderr discipline | every stdout line parses as JSON-RPC; diagnostics appear only on stderr (Doc 08 §13.2) |
-| `--debug` | adds a `request_id` echo per call and never changes stdout framing |
-| No `print()` leakage | 20 calls; every stdout line parses |
-| EOF | closing stdin exits 0 within 2 s, no orphan child, no traceback |
-| Parallel sessions | two sessions' responses match their own request ids in order |
 
 ---
 
@@ -842,14 +724,14 @@ def test_error_taxonomy(live_server, case):
 | Code | Status | Trigger |
 | :--- | :--- | :--- |
 | `VALIDATION_ERROR` | 400 | invalid slug on `POST /projects/`; 41 DoD items |
-| `PATH_OUT_OF_SCOPE` | 400 | `propose_task` with `..\..\etc\passwd` |
-| `AUTH_MISSING` / `AUTH_INVALID` | 401 | no header / `Bearer wrong` |
+| `PATH_OUT_OF_SCOPE` | 400 | `propose_task` with a traversal path such as `..\..\etc\passwd` |
+| `AUTH_MISSING` / `AUTH_INVALID` | 401 | missing Authorization header, or a valid-scheme but incorrect token |
 | `PROJECT_NOT_FOUND` / `TASK_NOT_FOUND` / `ASSET_NOT_FOUND` | 404 | unknown slug / id / asset |
 | `INVALID_TRANSITION` | 409 | approve a `PENDING` discovery; force-release a `PENDING` task |
-| `TASK_ALREADY_LEASED` | 409 | **contract gap** — Doc 01 §15 lists it but no Doc 04 route emits it (claim returns null, never a conflict): filed `DEF-04-01`; the test asserts the mapping in `errors.py` and marks the HTTP leg `expected_gap` |
+| `TASK_ALREADY_LEASED` | 409 | **resolved (Doc 01 v1.0.1)** — emitted by `POST /tasks/{id}/claim-for-agent/` (T14) when a live lease already exists |
 | `STALE_LEASE` | 409 | heartbeat/submit with an old lease id |
 | `DEPENDENCY_CYCLE` | 409 | B→C→B |
-| `DEPENDENCY_UNSATISFIABLE` | 409 | **contract gap** — Doc 01 §8 says such tasks are silently skipped, so no route emits it: filed `DEF-01-03`; asserted via a direct service call (integration), not HTTP |
+| `DEPENDENCY_UNSATISFIABLE` | 409 | **resolved (Doc 01 v1.0.1)** — raised only on `create_task` / `requeue` with a `REJECTED` blocker; the claim path skips silently by design |
 | `PAYLOAD_TOO_LARGE` | 413 | 6 MB patch; 26 MB upload |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | `image/gif` upload |
 | `RATE_LIMITED` | 429 | 121 internal calls in < 60 s, or the 13th SSE connection |
@@ -861,43 +743,11 @@ def test_error_taxonomy(live_server, case):
 
 One parameterised test over the 12 rows: each legal action succeeds, and the three most plausible illegal predecessors return `409 INVALID_TRANSITION` with `detail.from` and `detail.action`. `API-14b` enumerates `TaskStatus` and asserts every member appears in at least one legal transition, so a new status without a guard row fails loudly.
 
-### 10.4 `API-16` — query budgets (Doc 04 §9)
+### 10.4 `API-16` / `API-17` — query budgets and cursor stability
 
-Seeded fixture: 2 projects, 50 tasks (3 DoD items each), 200 events, 6 assets.
+Budgets from Doc 04 §9, asserted with `django_assert_num_queries` against a seeded fixture (2 projects, 50 tasks × 3 DoD items, 200 events, 6 assets): `GET /projects/` 2 · board (`page_size=50`) 6 · task detail 10 · `PATCH /priority/` 4 · `POST /internal/v1/claim` 6 · `GET /priority-matrix` (500 pts) 1 · `POST /assets/` (5 MB) 3. A breach prints every captured query's SQL, so the N+1 is visible without a profiler, and regressions are blocking (Doc 04 §9).
 
-| Endpoint | Max queries |
-| :--- | :--- |
-| `GET /projects/` | 2 |
-| `GET /projects/{slug}/tasks/?page_size=50` | 6 |
-| `GET /tasks/{id}/` | 10 |
-| `PATCH /tasks/{id}/priority/` | 4 |
-| `POST /internal/v1/claim` | 6 |
-| `GET /priority-matrix` (500 pts) | 1 |
-| `POST /assets/` (5 MB) | 3 |
-
-```python
-def test_board_query_budget(api_client, seeded_project, django_assert_num_queries):
-    with django_assert_num_queries(6) as captured:
-        r = api_client.get(f"/api/v1/projects/{seeded_project.slug}/tasks/?page_size=50")
-    assert r.status_code == 200 and len(r.json()["items"]) == 50
-    if len(captured) > 6:                     # richer than the builtin message
-        for q in captured:
-            print(q["sql"][:160])
-```
-
-A breach prints every query's SQL, so the N+1 is visible without a profiler. Regressions are blocking (Doc 04 §9).
-
-### 10.5 `API-17` — cursor stability under concurrent inserts
-
-| Step | Action |
-| :--- | :--- |
-| 1 | Seed 120 tasks, `created_at` 1 s apart (`frozen_clock.advance(1)` between creates) |
-| 2 | Fetch page 1 (`page_size=50`); capture `next_cursor` and the 50 ids |
-| 3 | Insert 30 tasks with `created_at` **between** page-1 rows (backdated by `jump(-30)`) |
-| 4 | Fetch page 2 with the cursor |
-| 5 | Walk the cursor to exhaustion |
-
-**Assertions:** no id repeats (`len(all_ids) == len(set(all_ids))`); all original 120 appear exactly once; the 30 backdated inserts never land inside the already-walked window; `next_cursor` is `null` only on the last page. The mirror test deletes rows mid-walk and asserts termination within 10 pages.
+`API-17` proves the cursor (not an offset) is stable: seed 120 tasks 1 s apart, fetch page 1 (`page_size=50`) and keep `next_cursor`, insert 30 tasks **backdated between** page-1 rows, fetch page 2, then walk to exhaustion. No id may repeat (`len(all_ids) == len(set(all_ids))`); all original 120 appear exactly once; the 30 backdated inserts never land inside the already-walked window; `next_cursor` is `null` only on the last page. The mirror test deletes rows mid-walk and asserts termination within 10 pages.
 
 ---
 
@@ -939,8 +789,7 @@ export default defineConfig({
 | `review.spec.ts` | literal patch, amber DoD banner, `Cmd+Enter` sign-off, notes-required reject | `FE-07` |
 | `canvas.spec.ts` | annotate → export → upload → re-open round-trip, blur analysis | `FE-08` |
 | `terminal.spec.ts` | auto-scroll + "N new" badge, reconnect after restart, burst containment | `FE-09`, `FE-10` |
-| `a11y.spec.ts` | axe on four routes, focus order, live regions, contrast | `FE-11` |
-| `visual/{board,canvas}.spec.ts` | CI-only pixel snapshots | `FE-12` |
+| `a11y.spec.ts` / `visual/*.spec.ts` | axe on four routes, focus order, live regions; CI-only pixel snapshots | `FE-11`, `FE-12` |
 
 ### 11.3 Keyboard traversal (`FE-03`)
 
@@ -1055,20 +904,15 @@ Coalescing is permitted **only** on `task.log`; `seq` coverage is preserved thro
 
 ### 12.4 `SSE-04` — keep-alive beyond 60 s
 
-| Variant | Method | Assertion |
-| :--- | :--- | :--- |
-| Fast (CI) | dedicated server with `ATLAS_SSE_KEEPALIVE_SECONDS=0.05` | ≥ 3 `: ping` comment frames within 0.2 s |
-| Real (nightly) | unpatched, idle 65 s, no events | ≥ 4 pings, deltas ≈ 15 s ± 2 s, connection open, zero reconnects |
-
-The fast variant proves the mechanism; the real one proves the number. Both are required.
+Two variants, both required. **Fast (CI):** a dedicated server with `ATLAS_SSE_KEEPALIVE_SECONDS=0.05` must emit ≥ 3 `: ping` comment frames within 0.2 s — this proves the mechanism. **Real (nightly):** unpatched, idle 65 s, no events ⇒ ≥ 4 pings, deltas ≈ 15 s ± 2 s, connection open, zero reconnects — this proves the number.
 
 ### 12.5 `SSE-05` — slow-consumer drop
 
-Pause the client pump, publish 10 000 events into `EventBus(maxsize=256)`, then resume. Assertions: publishes finish in **< 50 ms**; `sub.dropped == 9 744`; the resumed client receives a contiguous recent suffix plus a `dropped` indication (`⋯ N lines dropped`); no exception and no blocked producer. This is the test that proves a backgrounded tab cannot wedge the orchestrator.
+Pause the client pump, publish 10 000 events into `EventBus(maxsize=256)`, then resume. Assertions: publishes finish in **< 50 ms**; `sub.dropped == 9 744`; the resumed client receives a contiguous recent suffix plus a `dropped` indication; no exception and no blocked producer. This proves a backgrounded tab cannot wedge the orchestrator.
 
 ### 12.6 `SSE-06` — reconnect after backend restart
 
-Consume 3 frames; `proc.terminate()`; the client observes a clean EOF (no unhandled error, exactly one `onerror`); restart on the **same DB file**; reconnect with frame 3's `Last-Event-ID`; publish 2 more events. Assertions: the frames published *before* the kill but after the client's last id arrive once each, the 2 new frames follow, `seq` ordering holds, and `FE-10` shows the `RECONNECTING` badge appearing then clearing with a DOM line count equal to the unique `seq` count.
+Consume 3 frames; `proc.terminate()`; the client observes a clean EOF (no unhandled error, exactly one `onerror`); restart on the **same DB file**; reconnect with frame 3's `Last-Event-ID`; publish 2 more events. Assertions: frames published after the client's last id but before the kill arrive once each, the 2 new frames follow, `seq` ordering holds, and `FE-10` shows the `RECONNECTING` badge appearing then clearing with a DOM line count equal to the unique `seq` count.
 
 ### 12.7 `SSE-07` / `PERF-05` — latency budget
 
@@ -1097,17 +941,7 @@ def test_sse_latency_budget(live_server, leased_task):
 
 ### 12.8 Doc 09 test-ID reconciliation
 
-| Doc 09 ID | Owner here |
-| :--- | :--- |
-| `SSE-API-01/02/03` | `SSE-01` |
-| `SSE-API-04` | `SSE-04` (fast variant) |
-| `SSE-API-05/06/07` | `SSE-02` a–d |
-| `SSE-API-08` | `SSE-08` (13th connection → 429, `detail.limit == 12`) |
-| `SSE-API-09` | `SSE-09` (task deleted mid-stream → 410 on reconnect, no retry loop) |
-| `SSE-BUS-01…06` | `tests/integration/sse/test_bus_invariants.py` |
-| `SSE-SAN-01` | `SSE-10` (ANSI, `\r\n`, 4 001→4 000 + suffix, 2 kB payload marker) |
-| `SSE-FE-01…06` | Vitest under `frontend/lib/sse/__tests__/` (Doc 09 owns the code, Doc 10 the gate) |
-| `SSE-E2E-01…05` | `FE-09`, `FE-10`, `SSE-06` |
+`SSE-API-01/02/03` → `SSE-01`; `SSE-API-04` → `SSE-04` (fast variant); `SSE-API-05/06/07` → `SSE-02` a–d; `SSE-API-08` → `SSE-08` (13th connection → 429, `detail.limit == 12`); `SSE-API-09` → `SSE-09` (task deleted mid-stream → 410 on reconnect, no retry loop); `SSE-BUS-01…06` → `tests/integration/sse/test_bus_invariants.py`; `SSE-SAN-01` → `SSE-10` (ANSI, `\r\n`, 4 001→4 000 + suffix, 2 kB payload marker); `SSE-FE-01…06` → Vitest under `frontend/lib/sse/__tests__/` (Doc 09 owns the code, Doc 10 the gate); `SSE-E2E-01…05` → `FE-09`, `FE-10`, `SSE-06`.
 
 ---
 
@@ -1145,43 +979,19 @@ Measured with `perf_counter` around the `httpx` call — socket and serialisatio
 
 ### 13.3 Matrix render (`PERF-03`)
 
-| Metric | Budget | Method |
-| :--- | :--- | :--- |
-| 500-point mount | ≤ 16 ms | `performance.measure("matrix.render")`, 20 loads, max of the last 10 |
-| axis toggle (`X`) | ≤ 16 ms | same mark around the re-layout effect |
-| hover tooltip (21 points) | ≤ 4 ms | `performance.measure("matrix.hover")` |
-
-16 ms is one frame at 60 Hz: exceeding it drops a frame, which is the actual user-visible requirement.
+500-point mount ≤ **16 ms** and axis toggle ≤ 16 ms, both read from `performance.measure("matrix.render")` over 20 loads (max of the last 10); a 21-point hover tooltip measures ≤ 4 ms via `matrix.hover`. 16 ms is one frame at 60 Hz: exceeding it drops a frame, which is the actual user-visible requirement.
 
 ### 13.4 Claim throughput (`PERF-04`)
 
-| Metric | Budget | Method |
-| :--- | :--- | :--- |
-| 20 threads / 100 tasks | ≥ 100 claims/s (100 claims in ≤ 1 000 ms) | wall clock across the pool, `db_file`, `Barrier(20)` |
-| contended p95 per claim | < 20 ms | per-thread `perf_counter` deltas |
-| errors | exactly 0 | collected exception list |
-
-**Why 100/s:** the operative ceiling is 6–10 agents claiming minutes apart; 100/s is ~10× headroom and achievable because the claim is one indexed `UPDATE` under `BEGIN IMMEDIATE`. Falling below it means an N+1 or a missing index — exactly the regression this gate exists to catch.
+20 threads over 100 tasks must reach **≥ 100 claims/s** (100 claims in ≤ 1 000 ms), measured as wall clock across the pool on `db_file` behind `Barrier(20)`, with per-thread `perf_counter` deltas giving a contended p95 < 20 ms and an exception list that must be exactly empty. **Why 100/s:** the operative ceiling is 6–10 agents claiming minutes apart; 100/s is ~10× headroom and achievable because the claim is one indexed `UPDATE` under `BEGIN IMMEDIATE`. Falling below it means an N+1 or a missing index — exactly the regression this gate exists to catch.
 
 ### 13.5 Startup (`PERF-06`)
 
-| Metric | Budget | Method |
-| :--- | :--- | :--- |
-| `on_startup()` total | ≤ 2 000 ms | `StartupReport.duration_ms` on 5 000 tasks / 100 000 events / 2 000 files |
-| pragma + `quick_check` | ≤ 300 ms | `StartupReport.integrity_ms` (a **Doc 10 requirement** on Doc 03 §5.4) |
-| WAL | exact | `PRAGMA journal_mode == 'wal'` after startup |
-| sweeper cadence | config only | `SWEEPER_INTERVAL_SECONDS == 60` asserted as a constant, not by waiting |
-
-2 s is a human budget: an operator restarting after a crash should not wait. Measured by starting a subprocess and timing until `/healthz` returns 200 with a non-null `recovered_at`.
+`on_startup()` ≤ **2 000 ms** on 5 000 tasks / 100 000 events / 2 000 files, read from `StartupReport.duration_ms`; pragma + `quick_check` ≤ 300 ms from `StartupReport.integrity_ms` (a **Doc 10 requirement** on Doc 03 §5.4); `PRAGMA journal_mode == 'wal'` asserted after startup; `SWEEPER_INTERVAL_SECONDS == 60` asserted as a constant rather than by waiting. 2 s is a human budget: an operator restarting after a crash should not wait. Measured by starting a subprocess and timing until `/healthz` returns 200 with a non-null `recovered_at`.
 
 ### 13.6 Gate policy
 
-| Situation | Behaviour |
-| :--- | :--- |
-| PR touches code | all `PERF-*` run; > 10 % regression vs the `main` baseline fails |
-| PR touches docs/tests only | run and report, never fail |
-| Nightly on `main` | full run, `artifacts/perf/YYYY-MM-DD.json`; a 3-day upward trend opens an issue automatically |
-| Baseline | median of the last 7 nightly runs per metric in `artifacts/perf/baseline.json`, written only by the nightly job |
+A PR touching code runs all `PERF-*`; a > 10 % regression against the `main` baseline fails. A PR touching only docs/tests runs and reports but never fails. Nightly on `main` writes `artifacts/perf/YYYY-MM-DD.json`, and a 3-day upward trend opens an issue automatically. The baseline is the **median of the last 7 nightly runs per metric** in `artifacts/perf/baseline.json`, written only by the nightly job — never by a PR, or a slow PR would ratchet the baseline in its own favour.
 
 ---
 
@@ -1225,9 +1035,7 @@ flowchart TD
 
 ### 14.3 Caching, timeouts, artifacts
 
-Cached: pip wheels (`backend/pyproject.toml` + `mcp_server/pyproject.toml`), npm and Playwright browsers (`frontend/package-lock.json`), and the migration template DB (`backend/core/migrations/**`). **Never cached:** the test DB, `storage/`, `artifacts/` — correctness over speed.
-
-Timeouts and failure artifacts (14-day retention): lint/typecheck 10 min (log) · unit 15 min (junit + coverage) · integration 25 min (junit, `artifacts/queries/*` on budget breach) · mcp-conformance 10 min (MCP stdout/stderr, projection audit) · e2e-backend 40 min (`artifacts/**`: invariants, fault reports, SSE frames, logs) · e2e-frontend 40 min (Playwright HTML report, traces, videos, axe JSON) · perf-gate 25 min (`artifacts/perf/*.json`, bundle table).
+Cached: pip wheels (`backend/pyproject.toml` + `mcp_server/pyproject.toml`), npm and Playwright browsers (`frontend/package-lock.json`), and the migration template DB (`backend/core/migrations/**`). **Never cached:** the test DB, `storage/`, `artifacts/` — correctness over speed. Timeouts and failure artifacts (14-day retention): lint/typecheck 10 min (log) · unit 15 min (junit + coverage) · integration 25 min (junit, `artifacts/queries/*` on budget breach) · mcp-conformance 10 min (MCP stdout/stderr, projection audit) · e2e-backend 40 min (`artifacts/**`: invariants, fault reports, SSE frames, logs) · e2e-frontend 40 min (Playwright HTML report, traces, videos, axe JSON) · perf-gate 25 min (`artifacts/perf/*.json`, bundle table).
 
 ### 14.4 Workflow skeleton
 
@@ -1237,7 +1045,7 @@ on: { push: { branches: [main] }, pull_request: {}, schedule: [{ cron: '0 3 * * 
 concurrency: { group: atlas-${{ github.ref }}, cancel-in-progress: true }
 env: { ATLAS_API_TOKEN: test-token-do-not-ship, ATLAS_DISABLE_SWEEPER: '1', TZ: UTC }
 jobs:
-  lint:
+  lint:            # every job repeats the checkout + setup-python@v5 (3.11, cache: pip) prologue
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -1247,32 +1055,14 @@ jobs:
       - run: ruff check backend mcp_server scripts tests && ruff format --check backend mcp_server scripts tests
       - run: python scripts/verify_series.py --check no-sleep,no-mocks,clocks,lease-writer
       - run: npm ci --prefix frontend && npm --prefix frontend run lint
-  typecheck:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.11', cache: pip }
-      - run: pip install -e "backend[dev]" -e "mcp_server[dev]" && mypy backend mcp_server scripts
-      - run: npm ci --prefix frontend && npm --prefix frontend run typecheck
-  unit:
-    needs: [lint, typecheck]
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.11', cache: pip }
-      - run: pip install -e "backend[dev]" -e "mcp_server[dev]"
-      - run: pytest tests/unit -q --junitxml=artifacts/unit.xml
-      - run: npm ci --prefix frontend && npm --prefix frontend run test:unit
-  # integration | mcp-conformance | e2e-backend | e2e-frontend | perf-gate share the
-  # checkout + setup-python + pip-install prologue (factored to ./.github/actions/py-setup):
-  #   integration    : makemigrations --check --dry-run && pytest tests/integration -q -p no:randomly
-  #   mcp-conformance: pytest tests/e2e/test_mcp_conformance.py -q
-  #   e2e-backend    : pytest tests/e2e -q -m "not perf" -p no:randomly   (+ upload-artifact on failure)
-  #   e2e-frontend   : npx --prefix frontend playwright test --project=chromium
-  #   perf-gate      : pytest tests/e2e/test_perf_gates.py -q -m perf --workers 1
-  #                    && npm --prefix frontend run build && node scripts/check_budgets.mjs
+  typecheck:       # prologue, then `mypy backend mcp_server scripts` + `npm --prefix frontend run typecheck`
+  unit:            # needs: [lint, typecheck]; `pytest tests/unit -q --junitxml=artifacts/unit.xml` + `npm run test:unit`
+  # integration    : makemigrations --check --dry-run && pytest tests/integration -q -p no:randomly
+  # mcp-conformance: pytest tests/e2e/test_mcp_conformance.py -q
+  # e2e-backend    : pytest tests/e2e -q -m "not perf" -p no:randomly  (+ upload-artifact on failure)
+  # e2e-frontend   : npx --prefix frontend playwright test --project=chromium
+  # perf-gate      : pytest tests/e2e/test_perf_gates.py -q -m perf --workers 1
+  #                  && npm --prefix frontend run build && node scripts/check_budgets.mjs
 ```
 
 ### 14.5 Exact commands (copy-paste reference)
@@ -1363,8 +1153,8 @@ There is no `--force`. An invariant clears only by fixing the owning doc's imple
 
 | Defect | Gap | Owner | Doc 10 handling |
 | :--- | :--- | :--- | :--- |
-| `DEF-04-01` | `TASK_ALREADY_LEASED` is in the taxonomy; no Doc 04 route emits it | 04 | `API-13` asserts the mapping in `errors.py`; HTTP leg marked `expected_gap` |
-| `DEF-01-03` | `DEPENDENCY_UNSATISFIABLE` is in the taxonomy; Doc 01 §8 skips such tasks silently | 01/04 | asserted by a direct service call (integration), not HTTP |
+| ~~`DEF-04-01`~~ | ~~`TASK_ALREADY_LEASED` is in the taxonomy; no Doc 04 route emits it~~ | 04 | **Resolved in Doc 01 v1.0.1** — transition **T14** `POST /api/v1/tasks/{id}/claim-for-agent/` is the sole emitter; `API-13` asserts it through that route |
+| ~~`DEF-01-03`~~ | ~~`DEPENDENCY_UNSATISFIABLE` is in the taxonomy; Doc 01 §8 skips such tasks silently~~ | 01/04 | **Resolved in Doc 01 v1.0.1** — claim-filter skips silently; the code is raised only on explicit-intent routes (`create_task`, `requeue`) with the offending blocker in `detail`. Asserted at HTTP in `API-13`, not by a direct service call |
 | `DEF-01-04` | Doc 01 §17 cites Doc 10 sections that did not exist at freeze time | 01 | resolved by the §6.2 re-anchor |
 | `DEF-08-02` | `submit` idempotency uses per-process `LocMemCache` (Doc 04 §6.3); multi-worker deployments could double-submit | 04/08 | `MCP-06` passes single-process; the multi-worker risk is recorded as S3 |
 | `DEF-09-01` | `stream.reset` is a transport pseudo-type absent from `EventType` (deliberate, Doc 09 §6.4) | 09 | `SSE-02c` asserts it is never a persisted row |
@@ -1375,12 +1165,7 @@ Each row is `blocks_release: false` only because the *behaviour* is unambiguous;
 
 ### 15.5 Reporting cadence
 
-| Report | When | Recipient | Content |
-| :--- | :--- | :--- | :--- |
-| PR check summary | every push | author | stage table + artifact links |
-| `artifacts/acceptance.json` | every `e2e-backend` run | series owner | per-capability and per-invariant status with evidence |
-| Weekly digest | Monday | all subagents | flake rate, quarantine list, budget trends, open S1–S3 |
-| Release report | per release | human architect | §17.3 format |
+A PR check summary on every push (stage table + artifact links), `artifacts/acceptance.json` on every `e2e-backend` run, a Monday digest (flake rate, quarantine list, budget trends, open S1–S3), and a per-release acceptance report in the §17.3 format for the human architect.
 
 ---
 
@@ -1413,14 +1198,7 @@ Each row is `blocks_release: false` only because the *behaviour* is unambiguous;
 
 ### 16.2 Clean-clone procedure (the part people skip)
 
-| Step | Command | Expected |
-| :--- | :--- | :--- |
-| 1 | `git clone <repo> atlas-clean` | fresh tree, no `.env` |
-| 2 | `pip install -e "backend[dev]" -e "mcp_server[dev]"` | resolves from the lock, no local paths |
-| 3 | `npm ci --prefix frontend` | lockfile-only install |
-| 4 | `python scripts/bootstrap_dev.py --non-interactive --token test-token-do-not-ship` | writes `.env`, prints the MCP snippet |
-| 5 | `python backend/manage.py migrate` | all 7 migrations apply on an empty DB |
-| 6 | `python scripts/verify_series.py --all` | `SERIES GATE: PASS` |
+`git clone <repo> atlas-clean` (fresh tree, no `.env`) → `pip install -e "backend[dev]" -e "mcp_server[dev]"` (resolves from the lock, no local paths) → `npm ci --prefix frontend` (lockfile-only) → `python scripts/bootstrap_dev.py --non-interactive --token test-token-do-not-ship` (writes `.env`, prints the MCP snippet) → `python backend/manage.py migrate` (all 7 migrations apply on an empty DB) → `python scripts/verify_series.py --all` printing `SERIES GATE: PASS`.
 
 Any step needing a file that is not in git (hand-made fixture, manual DB seed, `.env` value) is a Doc 10 defect: the suite must be self-seeding. Doc 10 only *requires* a non-interactive mode on Doc 01 §13's `bootstrap_dev.py`.
 
@@ -1444,30 +1222,11 @@ Any step needing a file that is not in git (hand-made fixture, manual DB seed, `
 
 ### 17.1 Consumes
 
-| From | What | Used in |
-| :--- | :--- | :--- |
-| Doc 01 §8 | T1–T12 guards, illegal-transition semantics | `API-14`, `INV-I4-01` case c |
-| Doc 01 §11.1 | I1–I6 statements | §5 |
-| Doc 01 §15 | 15 error codes, status map, degraded-mode rules | `API-13` |
-| Doc 01 §16 | mock fixture pack (realistic values, every enum member) | Playwright fixtures mirror the shapes |
-| Doc 01 §17 | capability → verification traceability | §6.1, §6.2 |
-| Doc 02 §12 / §14 | D1–D8; hosted test list (WAL, constraints, atomic write, containment, dedupe, scaffold idempotency, query count) | §5.7, `tests/integration/db/*` |
-| Doc 03 §8 / §9 / §10 | invariants + row⇒file rule; runbook (executed by `FI-08`); crash-simulation contract | §5.7, §7.1, §7.5 |
-| Doc 04 §9 / §10 | query budgets, p95 targets, test matrix | §10.1, §10.4, §13.1 |
-| Doc 06 §15 / §17 | bundle budgets; 14 DoD items; `matrix.render` mark | §11, §13.2, §13.3 |
-| Doc 07 §15 | canvas test IDs; 4K/30 fps gate | §11.5 |
-| Doc 09 §9 / §15 / §16 | SSE limits, budgets, test IDs | §12 |
+Doc 01 §8 (T1–T12 + illegal-transition semantics) → `API-14`, `INV-I4-01` case c; §11.1 (I1–I6) → §5; §15 (15 error codes, status map, degraded-mode rules) → `API-13`; §16 (mock fixture pack) → Playwright fixtures mirror the shapes; §17 (capability traceability) → §6.1, §6.2. Doc 02 §12/§14 (D1–D8; hosted test list — WAL, constraints, atomic write, containment, dedupe, scaffold idempotency, query count) → §5.7, `tests/integration/db/*`. Doc 03 §8/§9/§10 (invariants + row⇒file rule; runbook exercised by `FI-08`; crash-simulation contract) → §5.7, §7.1, §7.5. Doc 04 §9/§10 (query budgets, p95 targets, test matrix) → §10.1, §10.4, §13.1. Doc 06 §15/§17 (bundle budgets, 14 DoD items, `matrix.render` mark) → §11, §13.2, §13.3. Doc 07 §15 (canvas test IDs, 4K/30 fps gate) → §11.5. Doc 09 §9/§15/§16 (SSE limits, budgets, test IDs) → §12.
 
 ### 17.2 Publishes
 
-| To | What |
-| :--- | :--- |
-| Doc 06 / 08 / 09 | `tests/fixtures/expected/` conformance pack (§9.1), byte-stable |
-| Doc 08 | `MCP-07` as the operative definition of "trimmed" |
-| Doc 04 | `API-18` route census as the completeness oracle |
-| Doc 03 | the `simulate_power_cut.py` CLI contract and the post-restart assertion set (§7.1–§7.2) |
-| All | the failure template and severity ladder (§15) |
-| Series owner | the acceptance report (§17.3) |
+`tests/fixtures/expected/` (§9.1) is byte-stable and is the conformance pack for Docs 06/08/09; `MCP-07` is the operative definition of "trimmed" for Doc 08; `API-18`'s route census is Doc 04's completeness oracle; the `simulate_power_cut.py` CLI contract and post-restart assertion set (§7.1–§7.2) belong to Doc 03; §15's failure template and severity ladder bind all docs; §17.3's acceptance report goes to the series owner.
 
 ### 17.3 Acceptance report format
 

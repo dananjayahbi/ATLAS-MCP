@@ -658,16 +658,16 @@ Adds:
 ```json
 {
   "error": {
-    "code": "TASK_ALREADY_LEASED",
+    "code": "STALE_LEASE",
     "message": "Task 5f2d… is leased by Agent-Claude until 2026-10-27T08:25:00Z.",
     "retryable": false,
-    "detail": { "task_id": "5f2d…", "assigned_agent_id": "Agent-Claude" },
+    "detail": { "task_id": "5f2d…", "assigned_agent_id": "Agent-Claude", "current_lease_id": "lea_01JA2Y…" },
     "request_id": "req_01JA2Y…"
   }
 }
 ```
 
-HTTP status map: `VALIDATION_ERROR→400`, `AUTH_*→401/403`, `*_NOT_FOUND→404`, `*_CONFLICT|TASK_ALREADY_LEASED|STALE_LEASE|INVALID_TRANSITION|DEPENDENCY_CYCLE→409`, `PAYLOAD_TOO_LARGE→413`, `RATE_LIMITED→429`, `INTERNAL_ERROR→500`, `STORAGE_WRITE_FAILED→507`.
+HTTP status map: `VALIDATION_ERROR→400`, `AUTH_*→401/403`, `*_NOT_FOUND→404`, `*_CONFLICT|TASK_ALREADY_LEASED|STALE_LEASE|INVALID_TRANSITION|DEPENDENCY_CYCLE|DEPENDENCY_UNSATISFIABLE→409`, `PAYLOAD_TOO_LARGE→413`, `PAYLOAD_TOO_SCOPE→400`, `RATE_LIMITED→429`, `INTERNAL_ERROR→500`, `STORAGE_WRITE_FAILED→507`.
 
 ### 7.9 SSE envelope (single shape for all channels)
 
@@ -705,7 +705,8 @@ PENDING_APPROVAL ──approve──▶ PENDING ──claim──▶ IN_PROGRESS
 | T10 | `IN_PROGRESS` | `reclaim_expired` (system) | `PENDING` | `lease_expires_at < now` | `[SYSTEM CRASH DETECTED]` log line, `task.lease_expired`, audit |
 | T11 | `IN_PROGRESS` | `force_release` (human) | `PENDING` | operator action | audit `LEASE_RECLAIMED` actor `human` |
 | T12 | `PENDING`/`REJECTED` | `archive_task` | `REJECTED` | operator action | audit only |
-| T13 | `REJECTED` | `requeue_task` (human) | `PENDING` | status is `REJECTED` **and** `review_notes` may be cleared | `review_notes = ""`, `attempt_count` unchanged, audit `TASK_STATUS` actor `human` |
+| T13 | `REJECTED` | `requeue_task` (human) | `PENDING` | status is `REJECTED` **and** every `blocked_by` is `COMPLETED` | `review_notes = ""`, `attempt_count` unchanged, audit `TASK_STATUS` actor `human` |
+| T14 | `PENDING` | `claim_for_agent` (human picks one task) | `IN_PROGRESS` | task is `PENDING`, not blocked, and holds **no** live lease | grants a lease to the named agent, audit `LEASE_GRANTED` actor `human`. If a live lease exists → `409 TASK_ALREADY_LEASED` |
 
 **Illegal transitions** must return `409 INVALID_TRANSITION` with `{"from":…,"action":…}` in `detail`.
 
@@ -715,7 +716,9 @@ PENDING_APPROVAL ──approve──▶ PENDING ──claim──▶ IN_PROGRESS
 
 **DoD guard:** `submit_for_review` does **not** require 100 % DoD completion, but the response includes `dod_progress_percent` and the UI flags incomplete items in amber. Human sign-off is the only hard gate (Master §6.3).
 
-**Dependency guard:** a task is claimable only when every `blocked_by` task is `COMPLETED`. `REJECTED` blockers are treated as *not* satisfied and raise `DEPENDENCY_UNSATISFIABLE` at claim-filter time (they are silently skipped, never claimed).
+**Dependency guard:** a task is claimable only when every `blocked_by` task is `COMPLETED`. At **claim-filter** time a task with an unsatisfied or `REJECTED` blocker is **silently skipped** — `claim_next_task` returns the next eligible task, or `{"task_id": null, "reason": "NO_ELIGIBLE_TASK"}`. It never raises, because a queue scan is not a user action and must stay cheap (Master §4.2).
+
+`DEPENDENCY_UNSATISFIABLE` is raised only on **explicit intent** operations where a human is acting on one known task: `create_task` / `reopen` with a `REJECTED` blocker in `blocked_by`, and `requeue` (T13) when a blocker was rejected. The operator gets a 409 with the offending blocker in `detail`; the sweeper and claim path never emit it.
 
 ---
 
@@ -804,7 +807,7 @@ All routes: `POST`, `Authorization: Bearer $ATLAS_API_TOKEN`, JSON in/out, `X-AT
 | Route | Body | Returns |
 | :--- | :--- | :--- |
 | `/internal/v1/claim` | `{project_slug, agent_identifier, min_priority}` | §9.2 projection |
-| `/internal/v1/heartbeat` | `{task_id, lease_id}` | `{ok, lease_expires_at}` |
+| `/internal/v1/heartbeat` | `{task_id, lease_id}` | `{ok, lease_expires_at, seconds_remaining}` (§9.7) |
 | `/internal/v1/progress` | `{task_id, message, level}` | `{ok:true}` |
 | `/internal/v1/dod` | `{task_id, item_id, completed}` | `{ok, dod_progress_percent}` |
 | `/internal/v1/submit` | `{task_id, summary_of_work, git_patch, verification_log?}` | `{ok, status, dod_progress_percent}` |
@@ -876,7 +879,7 @@ SSE_KEEPALIVE_SECONDS      = 15
 | Tasks | `GET/POST /api/v1/projects/{slug}/tasks/`, `GET/PATCH /api/v1/tasks/{id}/` | 04 |
 | Priority | `PATCH /api/v1/tasks/{id}/priority/` → `{priority:int}` | 04, 06 |
 | DoD | `PATCH /api/v1/tasks/{id}/dod/{item_id}/` → `{completed:bool}` | 04 |
-| Queue ops | `POST /api/v1/tasks/{id}/force-release/`, `/archive/`, `/requeue/` | 04 |
+| Queue ops | `POST /api/v1/tasks/{id}/force-release/`, `/archive/`, `/requeue/`, `/claim-for-agent/` | 04 |
 | Discoveries | `GET /api/v1/discoveries/`, `POST /api/v1/discoveries/{id}/approve/`, `/reject/` | 04 |
 | Reviews | `GET /api/v1/reviews/`, `POST /api/v1/reviews/{id}/approve/`, `/reject/` | 04 |
 | Assets | `POST /api/v1/assets/` (multipart), `GET /api/v1/assets/{id}/content`, `/download` | 04, 07 |
@@ -932,7 +935,7 @@ SSE_KEEPALIVE_SECONDS      = 15
 | `AUTH_MISSING` / `AUTH_INVALID` | 401 | api/common | Token missing/bad |
 | `PROJECT_NOT_FOUND` / `TASK_NOT_FOUND` / `ASSET_NOT_FOUND` | 404 | api | |
 | `INVALID_TRANSITION` | 409 | services | Guard table §8 rejected |
-| `TASK_ALREADY_LEASED` | 409 | leases | Another agent holds a live lease |
+| `TASK_ALREADY_LEASED` | 409 | leases | **Only** raised by `POST /api/v1/tasks/{id}/claim-for-agent/` (§12) when a human deliberately assigns a specific task whose live lease belongs to someone else. The agent path never emits it — `claim_next_task` simply skips leased tasks. |
 | `STALE_LEASE` | 409 | leases | `lease_id` mismatch or expired |
 | `DEPENDENCY_CYCLE` | 409 | services | `blocked_by` would create a cycle |
 | `DEPENDENCY_UNSATISFIABLE` | 409 | services | Blocker `REJECTED` |
@@ -941,6 +944,8 @@ SSE_KEEPALIVE_SECONDS      = 15
 | `INTERNAL_ERROR` | 500 | all | Logged with `request_id` |
 | `STORAGE_WRITE_FAILED` | 507 | storage | `os.replace`/`fsync` failure |
 | `BACKEND_UNAVAILABLE` | 502 | mcp | Retryable ×2 |
+
+**Optional derived fields:** a response may carry *additional* convenience fields that are pure functions of frozen fields, provided the frozen field is still present and unmodified. Canonical instance: `/internal/v1/heartbeat` returns `seconds_remaining` alongside `lease_expires_at` (it is `max(0, lease_expires_at − now)`). Such fields are additive, must be documented by the producing doc, and must never be the *only* carrier of information.
 
 **Degraded-mode rules:** if the filesystem write fails, the DB transaction rolls back and the API returns `507`; the SSE bus still emits the failure event so the HUD shows a red banner. If SSE drops, the client reconnects with `Last-Event-ID` and falls back to a REST refetch (`staleTime` 0).
 
@@ -972,20 +977,21 @@ Fixture rules: values must be realistic (no `"lorem ipsum"`), timestamps must be
 
 | # | Master capability | Primary doc | Verifiable in |
 | :--- | :--- | :--- | :--- |
-| 1 | Atomic claim protocol | 03, 04, 08 | Doc 10 §5.2 race test |
-| 2 | DoD checklists | 02, 04, 08 | Doc 10 §5.4 |
-| 3 | Verification gates | 04, 06, 08 | Doc 10 §5.5 |
-| 4 | Subtask spawning | 04, 08 | Doc 10 §5.6 |
-| 5 | Dependency blocking (DAG) | 02, 04 | Doc 10 §5.7 |
-| 6 | In-app canvas annotation | 07 | Doc 10 §6 |
-| 7 | Cyber HUD theme | 05 | Doc 05 §9 visual QA |
-| 8 | Split multi-agent dashboard | 06 | Doc 10 §6 |
-| 9 | Live SSE terminal stream | 09 | Doc 10 §5.9 |
-| 10 | Keyboard-first navigation | 06 | Doc 10 §6.4 |
-| 11 | Visual priority matrix | 06 | Doc 10 §6.5 |
-| 12 | Project root detection | 02, 08 | Doc 10 §5.10 |
-| — | Leases & crash recovery | 03 | Doc 10 §5.3, §5.8 |
-| — | Token conservation | 08 | Doc 10 §5.11 |
+| 1 | Atomic claim protocol | 03, 04, 08 | Doc 10 `CAP-01`, `INV-I1..I3` (§5.1–5.3) |
+| 2 | DoD checklists | 02, 04, 08 | Doc 10 `CAP-02` (§6.1) |
+| 3 | Verification gates | 04, 06, 08 | Doc 10 `CAP-03` (§6.1) |
+| 4 | Subtask spawning | 04, 08 | Doc 10 `CAP-04` (§6.1) |
+| 5 | Dependency blocking (DAG) | 02, 04 | Doc 10 `CAP-05`, `INV-D*` (§5.7, §6.1) |
+| 6 | In-app canvas annotation | 07 | Doc 10 `CAP-06` (Playwright `canvas.spec.ts`, §11.5) |
+| 7 | Cyber HUD theme | 05 | Doc 10 `CAP-07` (`visual/board`, §11.6); Doc 05 §9 motion/a11y rules |
+| 8 | Split multi-agent dashboard | 06 | Doc 10 `CAP-08` (`board.spec.ts`, §11) |
+| 9 | Live SSE terminal stream | 09 | Doc 10 `CAP-09` + `SSE-*` (§12) |
+| 10 | Keyboard-first navigation | 06 | Doc 10 `CAP-10` (`keyboard.spec.ts`, §11) |
+| 11 | Visual priority matrix | 06 | Doc 10 `CAP-11` (`matrix.spec.ts`, §11) |
+| 12 | Project root detection | 02, 08 | Doc 10 `CAP-12` (§6.1) |
+| — | Leases & crash recovery | 03 | Doc 10 `X-LEASE` (§6.1), `FI-*` (§7) |
+| — | Token conservation | 08 | Doc 10 `X-TOKEN` (§6.1), `MCP-07` (§9.4) |
+| — | Discovery pipeline | 04, 08 | Doc 10 `X-DISCOVERY` (§6.1), `triage.spec.ts` |
 
 ---
 
@@ -1024,6 +1030,6 @@ Fixture rules: values must be realistic (no `"lorem ipsum"`), timestamps must be
 | Version | Date | Change | Reason |
 | :--- | :--- | :--- | :--- |
 | 1.0.0 | 2026-10-27 | Initial freeze | Series bootstrap |
-| 1.0.1 | 2026-10-27 | Added transition **T13** (`REJECTED → PENDING` via `requeue`); declared review-approve and force-release accept an **empty body**; added `assets[]` to `DiscoveryDTO` so triage can preview screenshots; clarified that one SSE connection serves exactly one `project_slug` (no global multiplexed channel) | Drift audit: Doc 06 found no guard row for `requeue`, `DiscoveryDTO` had no browser-loadable asset URL, and Doc 09/06 needed an explicit statement that the project stream is single-slug |
+| 1.0.1 | 2026-10-27 | Added transition **T13** (`REJECTED → PENDING` via `requeue`, now guarded on completed blockers) and **T14** (`claim_for_agent`, the sole emitter of `TASK_ALREADY_LEASED`); declared review-approve and force-release accept an **empty body**; added `assets[]` to `DiscoveryDTO`; clarified that one SSE connection serves exactly one `project_slug`; recorded the additive-field rule with `/internal/v1/heartbeat`'s `seconds_remaining`; **fixed a self-contradiction** where §8 said claim-filter *raises* `DEPENDENCY_UNSATISFIABLE` while also saying it skips silently | Drift audit by Doc 06 (missing `requeue` guard, no browser-loadable discovery asset) and Doc 10 (`DEF-04-01` `TASK_ALREADY_LEASED` had no emitter; `DEF-01-03` `DEPENDENCY_UNSATISFIABLE` had contradictory semantics) |
 
 **Procedure:** append a row, bump `CONTRACT_VERSION`, then update every consumer doc in the same PR. A doc that disagrees with this file is a defect in that doc, not in Doc 01.
