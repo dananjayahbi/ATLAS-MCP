@@ -1,0 +1,184 @@
+@import "tailwindcss";
+
+/* Layer 1 — primitives. Never referenced outside this file (Doc 05 §3.2). */
+:root {
+  --atlas-obsidian-950: #030712;
+  --atlas-obsidian-900: #060d1f;
+  --atlas-obsidian-800: #0b1528;
+  --atlas-obsidian-750: #0f1d33;
+  --atlas-slate-800: #1e293b;
+  --atlas-slate-700: #334155;
+  --atlas-cyan-400: #00f2fe;
+  --atlas-cyan-500: #00c9ff;
+  --atlas-cyan-100: #a5f3fc;
+  --atlas-cyan-900: #04202b;
+  --atlas-amber-500: #f59e0b;
+  --atlas-amber-600: #ff9100;
+  --atlas-amber-900: #231603;
+  --atlas-emerald-500: #10b981;
+  --atlas-emerald-400: #34d399;
+  --atlas-emerald-900: #04231a;
+  --atlas-crimson-500: #ef4444;
+  --atlas-crimson-400: #ff5252;
+  --atlas-crimson-900: #1f0a0f;
+  --atlas-ice-100: #e2e8f0;
+  --atlas-ice-300: #cbd5e1;
+  --atlas-ice-500: #94a3b8;
+  --atlas-ice-600: #8b9ab0;
+  --atlas-ice-650: #7a8aa3;
+  --atlas-ice-700: #6b7c94;
+  --atlas-ice-750: #5a6b84;
+
+  /* Status + priority + log aliases are DERIVED, never new hexes (Doc 05 §3.3). */
+  --status-pending-approval: var(--atlas-amber-500);
+  --status-pending: var(--atlas-ice-500);
+  --status-in-progress: var(--atlas-cyan-400);
+  --status-in-review: var(--atlas-amber-500);
+  --status-completed: var(--atlas-emerald-500);
+  --status-rejected: var(--atlas-crimson-500);
+  --priority-low: var(--atlas-ice-650);
+  --priority-medium: var(--atlas-cyan-500);
+  --priority-high: var(--atlas-amber-500);
+  --priority-critical: var(--atlas-crimson-400);
+  --log-debug: var(--atlas-ice-700);
+  --log-info: var(--atlas-ice-500);
+  --log-warn: var(--atlas-amber-500);
+  --log-error: var(--atlas-crimson-400);
+}
+
+/* Layer 2 — semantic. These generate the ONLY colour utilities in the app. */
+@theme {
+  --color-canvas: var(--atlas-obsidian-950);
+  --color-panel: var(--atlas-obsidian-900);
+  --color-raised: var(--atlas-obsidian-800);
+  --color-inset: var(--atlas-obsidian-750);
+  --color-grid: var(--atlas-slate-800);
+  --color-grid-strong: var(--atlas-slate-700);
+  --color-flow: var(--atlas-cyan-400);
+  --color-flow-dim: var(--atlas-cyan-500);
+  --color-flow-tint: var(--atlas-cyan-900);
+  --color-review: var(--atlas-amber-500);
+  --color-review-hot: var(--atlas-amber-600);
+  --color-review-tint: var(--atlas-amber-900);
+  --color-success: var(--atlas-emerald-500);
+  --color-success-soft: var(--atlas-emerald-400);
+  --color-success-tint: var(--atlas-emerald-900);
+  --color-critical: var(--atlas-crimson-500);
+  --color-critical-hot: var(--atlas-crimson-400);
+  --color-critical-tint: var(--atlas-crimson-900);
+  --color-primary: var(--atlas-ice-100);
+  --color-secondary: var(--atlas-ice-500);
+  --color-muted: var(--atlas-ice-600);
+  --color-disabled: var(--atlas-ice-750);
+  --color-machine: var(--atlas-cyan-100);
+  --color-inverse: var(--atlas-obsidian-950);
+  --color-priority-low: var(--atlas-ice-650);
+  --color-log-debug: var(--atlas-ice-700);
+  --color-log-info: var(--atlas-ice-500);
+  --color-log-warn: var(--atlas-amber-500);
+  --color-log-error: var(--atlas-crimson-400);
+  --color-status-pending-approval: var(--atlas-amber-500);
+  --color-status-pending: var(--atlas-ice-500);
+  --color-status-in-progress: var(--atlas-cyan-400);
+  --color-status-in-review: var(--atlas-amber-500);
+  --color-status-completed: var(--atlas-emerald-500);
+  --color-status-rejected: var(--atlas-crimson-500);
+
+  --font-ui: var(--font-inter), Inter, "Geist Sans", system-ui, sans-serif;
+  --font-machine: var(--font-jetbrains), "JetBrains Mono", "Geist Mono", ui-monospace, monospace;
+
+  --text-hud-micro: 10px;
+  --text-hud-micro--line-height: 12px;
+  --text-hud-micro--letter-spacing: 0.08em;
+  --text-hud-micro--font-weight: 600;
+  --text-hud-label: 11px;
+  --text-hud-label--line-height: 14px;
+  --text-hud-label--letter-spacing: 0.06em;
+  --text-hud-label--font-weight: 600;
+  --text-hud-body: 12px;
+  --text-hud-body--line-height: 18px;
+  --text-hud-bodylg: 13px;
+  --text-hud-bodylg--line-height: 20px;
+  --text-hud-title: 15px;
+  --text-hud-title--line-height: 20px;
+  --text-hud-title--font-weight: 600;
+  --text-hud-heading: 18px;
+  --text-hud-heading--line-height: 24px;
+  --text-hud-heading--font-weight: 600;
+  --text-hud-display: 28px;
+  --text-hud-display--line-height: 32px;
+  --text-hud-display--font-weight: 600;
+  --text-machine-sm: 11px;
+  --text-machine-sm--line-height: 16px;
+  --text-machine-md: 12px;
+  --text-machine-md--line-height: 18px;
+  --text-machine-lg: 13px;
+  --text-machine-lg--line-height: 20px;
+
+  --spacing-panel: 12px;
+  --spacing-row: 28px;
+  --spacing-gutter: 12px;
+  --spacing-frame: 40px;
+  --radius-hud: 4px;
+  --radius-chip: 2px;
+  --breakpoint-hud-dual: 1280px;
+  --breakpoint-hud-quad: 1920px;
+  --animate-hud-pulse: hud-pulse 2000ms cubic-bezier(0.2, 0, 0, 1) infinite;
+  --animate-hud-append: hud-append 120ms cubic-bezier(0.2, 0, 0, 1) 1;
+  --shadow-hud-panel: inset 0 1px 0 0 rgb(255 255 255 / 0.03), 0 8px 24px -12px rgb(0 0 0 / 0.6);
+}
+
+/* Non-utility derived aliases consumed via var() in components (never as classes). */
+:root {
+  --surface-canvas: var(--color-canvas);
+  --surface-panel: var(--color-panel);
+  --surface-raised: var(--color-raised);
+  --surface-inset: var(--color-inset);
+  --surface-scrim: rgb(3 7 18 / 0.72);
+  --text-primary: var(--color-primary);
+  --text-secondary: var(--color-secondary);
+  --text-muted: var(--color-muted);
+  --text-disabled: var(--color-disabled);
+  --text-machine: var(--color-machine);
+  --text-inverse: var(--color-inverse);
+  --border-grid: var(--color-grid);
+  --border-strong: var(--color-grid-strong);
+  --border-focus: var(--color-flow);
+  --duration-instant: 80ms;
+  --duration-enter: 160ms;
+  --duration-append: 120ms;
+  --duration-gauge: 420ms;
+  --ease-hud: cubic-bezier(0.2, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+}
+
+@keyframes hud-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes hud-append {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}

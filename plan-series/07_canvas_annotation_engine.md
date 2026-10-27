@@ -1,4 +1,4 @@
-# Doc 07 — In-App Canvas Annotation Engine
+﻿# Doc 07 — In-App Canvas Annotation Engine
 
 > **Series position:** 07 of 10 · **Owner:** Subagent 7 (Canvas Specialist)
 > **Parent:** [`master_implementation_plan.md`](./master_implementation_plan.md) §3, §4.1, §6 item 6, §11
@@ -1037,7 +1037,7 @@ On mount, if `KEY(taskId)` exists **and** its `doc.sourceAssetId` matches the pr
 
 ### 14.1 CORS / tainted canvas
 
-The source image is always fetched from **same-origin** `/api/v1/assets/{id}/content` (Doc 01 §12), proxied by the Next.js rewrite to `127.0.0.1:8000` (Doc 01 §12 transport note). Same-origin means the canvas is never tainted and `toBlob()` always succeeds. Defences:
+The source image is always fetched from **same-origin** `/api/v1/assets/{id}/content` (Doc 01 §12), proxied by the Next.js rewrite to `127.0.0.1:8471` (Doc 01 §12 transport note). Same-origin means the canvas is never tainted and `toBlob()` always succeeds. Defences:
 
 - `loadBitmap` uses `fetch` + `createImageBitmap`, **not** a bare `<img crossOrigin>`, so a misconfigured `Access-Control-Allow-Origin` surfaces as a `fetch` failure (`IMAGE_FETCH_FAILED`) rather than a silent taint that only explodes at export.
 - If a taint is somehow detected (`toBlob` returns `null` with `SecurityError` in the console), raise `EXPORT_TAINTED` with the message "Image served cross-origin; export blocked" — never silently produce a blank PNG.

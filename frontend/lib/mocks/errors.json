@@ -1,0 +1,196 @@
+﻿{
+  "items": [
+    {
+      "error": {
+        "code": "VALIDATION_ERROR",
+        "message": "priority must be between 0 and 100",
+        "retryable": false,
+        "detail": {
+          "field": "priority"
+        },
+        "request_id": "req_01JA2Y0001"
+      }
+    },
+    {
+      "error": {
+        "code": "PATH_OUT_OF_SCOPE",
+        "message": "path escapes ATLAS_STORAGE_ROOT",
+        "retryable": false,
+        "detail": {
+          "path": "C:\\Windows\\system32"
+        },
+        "request_id": "req_01JA2Y0002"
+      }
+    },
+    {
+      "error": {
+        "code": "AUTH_MISSING",
+        "message": "Authorization header required",
+        "retryable": false,
+        "detail": null,
+        "request_id": "req_01JA2Y0003"
+      }
+    },
+    {
+      "error": {
+        "code": "AUTH_INVALID",
+        "message": "API token rejected",
+        "retryable": false,
+        "detail": null,
+        "request_id": "req_01JA2Y0004"
+      }
+    },
+    {
+      "error": {
+        "code": "PROJECT_NOT_FOUND",
+        "message": "no project with slug 'gamma'",
+        "retryable": false,
+        "detail": {
+          "slug": "gamma"
+        },
+        "request_id": "req_01JA2Y0005"
+      }
+    },
+    {
+      "error": {
+        "code": "TASK_NOT_FOUND",
+        "message": "task not found",
+        "retryable": false,
+        "detail": {
+          "task_id": "5f2d6c0001-1f0b-4c5b-9a2e-77d0d2f3c901"
+        },
+        "request_id": "req_01JA2Y0006"
+      }
+    },
+    {
+      "error": {
+        "code": "ASSET_NOT_FOUND",
+        "message": "asset not found",
+        "retryable": false,
+        "detail": null,
+        "request_id": "req_01JA2Y0007"
+      }
+    },
+    {
+      "error": {
+        "code": "INVALID_TRANSITION",
+        "message": "cannot requeue a PENDING task",
+        "retryable": false,
+        "detail": {
+          "from": "PENDING",
+          "action": "requeue"
+        },
+        "request_id": "req_01JA2Y0008"
+      }
+    },
+    {
+      "error": {
+        "code": "TASK_ALREADY_LEASED",
+        "message": "task is leased by Agent-Claude",
+        "retryable": false,
+        "detail": {
+          "task_id": "5f2d6c0001-1f0b-4c5b-9a2e-77d0d2f3c901",
+          "assigned_agent_id": "Agent-Claude",
+          "current_lease_id": "lea_01JA2Y7Q0K"
+        },
+        "request_id": "req_01JA2Y0009"
+      }
+    },
+    {
+      "error": {
+        "code": "STALE_LEASE",
+        "message": "lease_id does not match the live lease",
+        "retryable": false,
+        "detail": {
+          "task_id": "5f2d6c0001-1f0b-4c5b-9a2e-77d0d2f3c901"
+        },
+        "request_id": "req_01JA2Y0010"
+      }
+    },
+    {
+      "error": {
+        "code": "DEPENDENCY_CYCLE",
+        "message": "blocked_by would create a cycle",
+        "retryable": false,
+        "detail": {
+          "cycle": [
+            "5f2d6c0001-1f0b-4c5b-9a2e-77d0d2f3c901",
+            "5f2d6c0002-1f0b-4c5b-9a2e-77d0d2f3c902"
+          ]
+        },
+        "request_id": "req_01JA2Y0011"
+      }
+    },
+    {
+      "error": {
+        "code": "DEPENDENCY_UNSATISFIABLE",
+        "message": "blocker was rejected",
+        "retryable": false,
+        "detail": {
+          "blocker_id": "5f2d6c0011-1f0b-4c5b-9a2e-77d0d2f3c911"
+        },
+        "request_id": "req_01JA2Y0012"
+      }
+    },
+    {
+      "error": {
+        "code": "PAYLOAD_TOO_LARGE",
+        "message": "git_patch exceeds 5 MB",
+        "retryable": false,
+        "detail": {
+          "max_bytes": 5242880
+        },
+        "request_id": "req_01JA2Y0013"
+      }
+    },
+    {
+      "error": {
+        "code": "UNSUPPORTED_MEDIA_TYPE",
+        "message": "image/gif is not allowed",
+        "retryable": false,
+        "detail": {
+          "allowed": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "text/plain",
+            "text/markdown"
+          ]
+        },
+        "request_id": "req_01JA2Y0014"
+      }
+    },
+    {
+      "error": {
+        "code": "INTERNAL_ERROR",
+        "message": "unexpected server error",
+        "retryable": true,
+        "detail": null,
+        "request_id": "req_01JA2Y0015"
+      }
+    },
+    {
+      "error": {
+        "code": "STORAGE_WRITE_FAILED",
+        "message": "os.replace failed: disk full",
+        "retryable": true,
+        "detail": {
+          "path": "storage/projects/"
+        },
+        "request_id": "req_01JA2Y0016"
+      }
+    },
+    {
+      "error": {
+        "code": "BACKEND_UNAVAILABLE",
+        "message": "Django backend unreachable",
+        "retryable": true,
+        "detail": {
+          "url": "http://127.0.0.1:8471"
+        },
+        "request_id": "req_01JA2Y0017"
+      }
+    }
+  ],
+  "next_cursor": null
+}

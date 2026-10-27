@@ -1,4 +1,4 @@
-# Doc 08 — FastMCP Protocol Server & Tool Contracts
+﻿# Doc 08 — FastMCP Protocol Server & Tool Contracts
 
 > **Series position:** 08 of 10 · **Owner:** Subagent 8 (MCP Protocol Lead)
 > **Consumes:** Doc 01 §5 (paths), §6 (enums), §9 (tool contracts), §9.6 (projection limits), §9.7 (error surface), §10 (`/internal/v1`), §11.2 (lease constants), §13 (env), §14 (security), §15 (taxonomy); Doc 02 §8 (`StorageRouter`, `to_absolute`, `ensure_within_root`).
@@ -53,7 +53,7 @@ Agent CLI ──MCP/stdio──▶ mcp_server ──HTTP/JSON──▶ Django �
 | stdout | Reserved exclusively for MCP framing — nothing else, ever (§13.2) |
 | stderr | All logs, tracebacks, `--debug` dumps |
 | Shared mutable state | None, within a process or across processes |
-| Backend link | `httpx.Client` → `127.0.0.1:8000/internal/v1/*`, loopback only |
+| Backend link | `httpx.Client` → `127.0.0.1:8471/internal/v1/*`, loopback only |
 | Concurrency | FastMCP serialises tool calls per session (§5.4) |
 
 ### 2.1 Lifecycle
@@ -176,7 +176,7 @@ mcp_server/
   "type": "stdio", "command": "python",
   "args": ["-m", "mcp_server", "--project", "alpha", "--agent", "Agent-Claude"],
   "cwd": "${workspaceFolder}",
-  "env": {"ATLAS_BACKEND_URL": "http://127.0.0.1:8000",
+  "env": {"ATLAS_BACKEND_URL": "http://127.0.0.1:8471",
           "ATLAS_API_TOKEN": "${env:ATLAS_API_TOKEN}",
           "ATLAS_STORAGE_ROOT": "${workspaceFolder}/storage"}}}}
 ```
@@ -187,7 +187,7 @@ mcp_server/
 {"mcpServers": {"atlas": {
   "command": "C:\\My_GitHub_Repos\\ATLAS-MCP\\.venv\\Scripts\\python.exe",
   "args": ["-m", "mcp_server", "--project", "alpha", "--agent", "Agent-Claude"],
-  "env": {"ATLAS_BACKEND_URL": "http://127.0.0.1:8000",
+  "env": {"ATLAS_BACKEND_URL": "http://127.0.0.1:8471",
           "ATLAS_API_TOKEN": "<paste-dev-token>",
           "ATLAS_STORAGE_ROOT": "C:\\My_GitHub_Repos\\ATLAS-MCP\\storage",
           "PYTHONPATH": "C:\\My_GitHub_Repos\\ATLAS-MCP"}}}}
@@ -1022,7 +1022,7 @@ Rendering — errors travel as a **normal** tool result:
 | **stdout** | MCP JSON-RPC frames **only** — not one byte more |
 | **stderr** | `logging` records, tracebacks, `--debug` dumps, startup banner |
 
-One stray `print()` corrupts the JSON-RPC stream and the agent sees a protocol parse failure with no diagnostic. Enforcement: (1) `configure_stderr_logging()` attaches a `StreamHandler(sys.stderr)` and **removes** any handler bound to stdout, third-party loggers included; (2) `builtins.print` is **not** monkey-patched (too surprising) — instead ruff rule `T201` bans `print` in `mcp_server/**` and CI fails on it (Doc 10); (3) one startup line states the resolved config with the token redacted — `atlas-mcp 0.1.0 backend=http://127.0.0.1:8000 agent=Agent-Claude project=alpha token=***`.
+One stray `print()` corrupts the JSON-RPC stream and the agent sees a protocol parse failure with no diagnostic. Enforcement: (1) `configure_stderr_logging()` attaches a `StreamHandler(sys.stderr)` and **removes** any handler bound to stdout, third-party loggers included; (2) `builtins.print` is **not** monkey-patched (too surprising) — instead ruff rule `T201` bans `print` in `mcp_server/**` and CI fails on it (Doc 10); (3) one startup line states the resolved config with the token redacted — `atlas-mcp 0.1.0 backend=http://127.0.0.1:8471 agent=Agent-Claude project=alpha token=***`.
 
 ```
 2026-10-27T13:45:55.781Z INFO  atlas.mcp claim_next_task ok 187ms req=req_01JA2Z3M8Q bytes=4021
@@ -1094,7 +1094,7 @@ RAW = {"task_id": "5f2d…", "title": "T", "description": "D", "priority": 95,
 
 @respx.mock
 def test_claim_projects_and_trims(cfg):
-    route = respx.post("http://127.0.0.1:8000/internal/v1/claim").mock(
+    route = respx.post("http://127.0.0.1:8471/internal/v1/claim").mock(
         return_value=httpx.Response(200, json=RAW))
     out = claim_handler(cfg, AtlasClient(cfg), "alpha", "Agent-Claude", 0)
     assert "created_at" not in out and "recent_events" not in out

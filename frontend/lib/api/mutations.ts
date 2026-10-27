@@ -1,0 +1,166 @@
+"use client";
+
+import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
+import type { TaskDetailDTO, TaskSummaryDTO } from "@/lib/types/api";
+import type { ApiError } from "./client";
+import { discoveriesApi } from "./discoveries";
+import { qk } from "./keys";
+import { reviewsApi } from "./reviews";
+import { tasksApi } from "./tasks";
+import type { MatrixXAxis } from "./telemetry";
+
+/**
+ * Doc 06 §3.5 — exactly two optimistic mutations (priority, DoD). Status/review
+ * actions are always pessimistic: Doc 01 §8 guard reasons must be shown verbatim.
+ */
+
+function useInvalidate() {
+  const queryClient = useQueryClient();
+  return (keys: readonly (readonly unknown[])[]) => {
+    for (const key of keys) void queryClient.invalidateQueries({ queryKey: key });
+  };
+}
+
+export function useSetPriority(): UseMutationResult<
+  TaskSummaryDTO,
+  ApiError,
+  { id: string; priority: number },
+  { previous?: TaskDetailDTO }
+> {
+  const queryClient = useQueryClient();
+  const invalidate = useInvalidate();
+  return useMutation<TaskSummaryDTO, ApiError, { id: string; priority: number }, { previous?: TaskDetailDTO }>({
+    mutationFn: ({ id, priority }) => tasksApi.setPriority(id, priority),
+    onMutate: async ({ id, priority }) => {
+      await queryClient.cancelQueries({ queryKey: qk.tasks.detail(id) });
+      const previous = queryClient.getQueryData<TaskDetailDTO>(qk.tasks.detail(id));
+      if (previous) queryClient.setQueryData<TaskDetailDTO>(qk.tasks.detail(id), { ...previous, priority });
+      return { previous };
+    },
+    onError: (_error, variables, context) => {
+      if (context?.previous) queryClient.setQueryData(qk.tasks.detail(variables.id), context.previous);
+    },
+    onSettled: (_data, _error, variables) => {
+      invalidate([qk.tasks.detail(variables.id), qk.tasks.root, qk.telemetry.summary()]);
+    },
+  });
+}
+
+export function useToggleDod(): UseMutationResult<
+  TaskDetailDTO,
+  ApiError,
+  { id: string; itemId: number; completed: boolean },
+  { previous?: TaskDetailDTO }
+> {
+  const queryClient = useQueryClient();
+  const invalidate = useInvalidate();
+  return useMutation<TaskDetailDTO, ApiError, { id: string; itemId: number; completed: boolean }, { previous?: TaskDetailDTO }>({
+    mutationFn: ({ id, itemId, completed }) => tasksApi.toggleDod(id, itemId, completed),
+    onMutate: async ({ id, itemId, completed }) => {
+      await queryClient.cancelQueries({ queryKey: qk.tasks.detail(id) });
+      const previous = queryClient.getQueryData<TaskDetailDTO>(qk.tasks.detail(id));
+      if (previous) {
+        const definition_of_done = previous.definition_of_done.map((item) =>
+          item.id === itemId ? { ...item, completed, completed_at: completed ? new Date().toISOString() : null } : item,
+        );
+        const done = definition_of_done.filter((item) => item.completed).length;
+        const percent = definition_of_done.length === 0 ? 0 : Math.round((done / definition_of_done.length) * 100);
+        queryClient.setQueryData<TaskDetailDTO>(qk.tasks.detail(id), {
+          ...previous,
+          definition_of_done,
+          dod_progress_percent: percent,
+        });
+      }
+      return { previous };
+    },
+    onError: (_error, variables, context) => {
+      if (context?.previous) queryClient.setQueryData(qk.tasks.detail(variables.id), context.previous);
+    },
+    onSettled: (_data, _error, variables) => {
+      invalidate([qk.tasks.detail(variables.id), qk.tasks.root]);
+    },
+  });
+}
+
+export function useForceRelease(): UseMutationResult<TaskSummaryDTO, ApiError, { id: string }> {
+  const invalidate = useInvalidate();
+  return useMutation<TaskSummaryDTO, ApiError, { id: string }>({
+    mutationFn: ({ id }) => tasksApi.forceRelease(id),
+    onSettled: (_data, _error, variables) => {
+      invalidate([qk.tasks.detail(variables.id), qk.tasks.root, qk.projects.root, qk.telemetry.summary()]);
+    },
+  });
+}
+
+export function useRequeueTask(): UseMutationResult<TaskSummaryDTO, ApiError, { id: string }> {
+  const invalidate = useInvalidate();
+  return useMutation<TaskSummaryDTO, ApiError, { id: string }>({
+    mutationFn: ({ id }) => tasksApi.requeue(id),
+    onSettled: (_data, _error, variables) => {
+      invalidate([qk.tasks.detail(variables.id), qk.tasks.root, qk.projects.root]);
+    },
+  });
+}
+
+export function useApproveReview(): UseMutationResult<TaskSummaryDTO, ApiError, { id: string }> {
+  const invalidate = useInvalidate();
+  return useMutation<TaskSummaryDTO, ApiError, { id: string }>({
+    mutationFn: ({ id }) => reviewsApi.approve(id),
+    onSettled: (_data, _error, variables) => {
+      invalidate([qk.reviews.root, qk.tasks.detail(variables.id), qk.tasks.root, qk.projects.root, qk.telemetry.summary()]);
+    },
+  });
+}
+
+export function useRejectReview(): UseMutationResult<TaskSummaryDTO, ApiError, { id: string; notes: string }> {
+  const invalidate = useInvalidate();
+  return useMutation<TaskSummaryDTO, ApiError, { id: string; notes: string }>({
+    mutationFn: ({ id, notes }) => reviewsApi.reject(id, notes),
+    onSettled: (_data, _error, variables) => {
+      invalidate([qk.reviews.root, qk.tasks.detail(variables.id), qk.tasks.root, qk.projects.root]);
+    },
+  });
+}
+
+export function useApproveDiscovery(): UseMutationResult<
+  TaskSummaryDTO,
+  ApiError,
+  { id: string; priority: number },
+  { previousIds?: string[] }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<TaskSummaryDTO, ApiError, { id: string; priority: number }, { previousIds?: string[] }>({
+    mutationFn: ({ id, priority }) => discoveriesApi.approve(id, { priority }),
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: qk.discoveries.root });
+      return {};
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.discoveries.root });
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.root });
+      void queryClient.invalidateQueries({ queryKey: qk.projects.root });
+      void queryClient.invalidateQueries({ queryKey: qk.telemetry.summary() });
+    },
+  });
+}
+
+export function useRejectDiscovery(): UseMutationResult<TaskSummaryDTO | null, ApiError, { id: string }> {
+  const queryClient = useQueryClient();
+  return useMutation<TaskSummaryDTO | null, ApiError, { id: string }>({
+    mutationFn: async ({ id }) => {
+      await discoveriesApi.reject(id, { reason: null });
+      return null;
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.discoveries.root });
+      void queryClient.invalidateQueries({ queryKey: qk.telemetry.summary() });
+    },
+  });
+}
+
+export function useMatrixAxisInvalidator(): (x: MatrixXAxis) => void {
+  const queryClient = useQueryClient();
+  return (x: MatrixXAxis) => {
+    void queryClient.invalidateQueries({ queryKey: qk.telemetry.matrix(x) });
+  };
+}

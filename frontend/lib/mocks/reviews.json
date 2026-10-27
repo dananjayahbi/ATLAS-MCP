@@ -1,0 +1,72 @@
+{
+  "items": [
+    {
+      "id": "5f2d6c0004-1f0b-4c5b-9a2e-77d0d2f3c904",
+      "project_slug": "alpha",
+      "title": "Harden asset upload MIME sniffing",
+      "status": "IN_REVIEW",
+      "priority": 84,
+      "dod_progress_percent": 100,
+      "is_agent_discovered": false,
+      "is_blocked": false,
+      "parent_task_id": null,
+      "age_hours": 33.5,
+      "dependency_weight": 0.5,
+      "assigned_agent_id": "Agent-Claude",
+      "lease_seconds_remaining": null,
+      "created_at": "2026-10-25T22:40:11.297Z",
+      "updated_at": "2026-10-25T23:04:11.297Z",
+      "description": "Agent proposes byte-level MIME sniffing with an allow-list.",
+      "review_summary": "Added python-magic sniffing plus an allow-list on POST /api/v1/assets/.",
+      "attempt_count": 2,
+      "definition_of_done": [
+        {
+          "id": 1,
+          "label": "Sniff MIME from bytes",
+          "completed": true,
+          "completed_at": "2026-10-27T06:16:11.297Z"
+        },
+        {
+          "id": 2,
+          "label": "Allow-list enforced",
+          "completed": true,
+          "completed_at": "2026-10-27T06:22:11.297Z"
+        },
+        {
+          "id": 3,
+          "label": "413 on oversize",
+          "completed": true,
+          "completed_at": "2026-10-27T06:28:11.297Z"
+        },
+        {
+          "id": 4,
+          "label": "Unit tests added",
+          "completed": true,
+          "completed_at": "2026-10-27T06:34:11.297Z"
+        }
+      ],
+      "blocked_by": [],
+      "blocks": [],
+      "child_task_ids": [],
+      "discovered_during_task_id": null,
+      "discovery_reason": "",
+      "suggested_priority": null,
+      "review_notes": "",
+      "assets": [
+        {
+          "id": "9e2f3333-4444-4555-8666-777788889999",
+          "kind": "OUTPUT_PATCH",
+          "filename": "git_patch.patch",
+          "mime_type": "text/plain",
+          "byte_size": 8421,
+          "source": "AGENT",
+          "absolute_path": "E:\\My_GitHub_Repos\\ATLAS-MCP\\storage\\projects\\b3f1c0a4-7d21-4a6e-9f5c-2a1e8d6f0c11\\tasks\\5f2d6c0004-1f0b-4c5b-9a2e-77d0d2f3c904\\output\\git_patch.patch",
+          "url": "/api/v1/assets/9e2f3333-4444-4555-8666-777788889999/content",
+          "created_at": "2026-10-27T06:46:11.297Z"
+        }
+      ],
+      "recent_events": []
+    }
+  ],
+  "next_cursor": null
+}

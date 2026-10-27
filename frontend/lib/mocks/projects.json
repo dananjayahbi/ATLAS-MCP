@@ -1,0 +1,46 @@
+[
+  {
+    "contract_version": "1.0.0",
+    "id": "b3f1c0a4-7d21-4a6e-9f5c-2a1e8d6f0c11",
+    "slug": "alpha",
+    "name": "Alpha Backend",
+    "local_repo_path": "E:\\dev\\alpha",
+    "accent_color": "#00F2FE",
+    "global_rules_md": "Use pnpm. Tests: pytest -q. Never touch `legacy/`.",
+    "archived_at": null,
+    "created_at": "2026-10-20T16:10:11.297Z",
+    "updated_at": "2026-10-27T07:52:11.297Z",
+    "counters": {
+      "pending": 5,
+      "in_progress": 1,
+      "in_review": 1,
+      "completed": 2,
+      "pending_approval": 2,
+      "health_percent": 22
+    },
+    "active_agent_id": "Agent-Claude",
+    "last_event_at": "2026-10-27T08:08:59.297Z"
+  },
+  {
+    "contract_version": "1.0.0",
+    "id": "c4a2d1b5-8e32-4b7f-a06d-3b2f9e7a1d22",
+    "slug": "beta",
+    "name": "Beta Dashboard",
+    "local_repo_path": "E:\\dev\\beta",
+    "accent_color": "#F59E0B",
+    "global_rules_md": "Next 15 App Router. No new dependencies without an ADR.",
+    "archived_at": null,
+    "created_at": "2026-10-22T08:10:11.297Z",
+    "updated_at": "2026-10-27T07:04:11.297Z",
+    "counters": {
+      "pending": 4,
+      "in_progress": 1,
+      "in_review": 1,
+      "completed": 2,
+      "pending_approval": 0,
+      "health_percent": 25
+    },
+    "active_agent_id": "Agent-Copilot",
+    "last_event_at": "2026-10-27T07:46:11.297Z"
+  }
+]

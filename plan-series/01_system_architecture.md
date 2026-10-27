@@ -1,4 +1,4 @@
-# Doc 01 — System Architecture & Data Contracts
+﻿# Doc 01 — System Architecture & Data Contracts
 
 > **Series position:** 01 of 10 · **Owner:** Subagent 1 (Lead Architect)
 > **Authority:** This document is the **single immutable source of truth** for every schema, identifier, path, port, and enum in ATLAS-MCP.
@@ -47,13 +47,13 @@ All DTO examples in the series must declare `"contract_version": "1.0.0"` where 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                            HUMAN ARCHITECT (Browser)                         │
 └───────────────────────────────┬──────────────────────────────────────────────┘
-                                │ HTTPS/SSE  →  http://127.0.0.1:3000
+                                │ HTTPS/SSE  →  http://127.0.0.1:3471
                                 ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │               FRONTEND — Next.js 15 App Router (Node runtime)                │
 │  Browser ⇄ same-origin /api/v1/*  ⇄ (Next rewrite, injects Bearer token)     │
 └───────────────────────────────┬──────────────────────────────────────────────┘
-                                │ HTTP + SSE  →  http://127.0.0.1:8000
+                                │ HTTP + SSE  →  http://127.0.0.1:8471
                                 ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │           ORCHESTRATION ENGINE — Django 5 (ASGI via uvicorn/daphne)          │
@@ -90,8 +90,8 @@ All DTO examples in the series must declare `"contract_version": "1.0.0"` where 
 
 | Process | Command | Port | Owner doc |
 | :--- | :--- | :--- | :--- |
-| Backend API | `python backend/manage.py runserver 127.0.0.1:8000` (or `uvicorn atlas.asgi:application --port 8000`) | 8000 | 02, 03, 04, 09 |
-| Frontend | `npm --prefix frontend run dev` | 3000 | 05, 06, 07, 09 |
+| Backend API | `python backend/manage.py runserver 127.0.0.1:8471` (or `uvicorn atlas.asgi:application --port 8471`) | 8471 | 02, 03, 04, 09 |
+| Frontend | `npm --prefix frontend run dev` | 3471 | 05, 06, 07, 09 |
 | MCP server | `python -m mcp_server` (stdio) | — | 08 |
 | Mock agent runner | `python scripts/run_mock_agent.py --project alpha` | — | 10 |
 
@@ -176,7 +176,7 @@ ATLAS-MCP/
 │   └── data/                         # gitignored: atlas.db, atlas.db-wal
 ├── frontend/
 │   ├── package.json
-│   ├── next.config.ts                # /api/v1/* rewrite → 127.0.0.1:8000
+│   ├── next.config.ts                # /api/v1/* rewrite → 127.0.0.1:8471
 │   ├── tailwind.config.ts
 │   ├── app/
 │   │   ├── layout.tsx
@@ -887,7 +887,7 @@ SSE_KEEPALIVE_SECONDS      = 15
 | SSE | `GET /api/v1/stream/events?project_slug=`, `GET /api/v1/stream/tasks/{id}/log` | 09 |
 | Health | `GET /healthz` (no auth) → `{status:"ok", db:"wal", recovered_tasks:n}` | 03 |
 
-**Transport note:** the browser calls these same-origin; `next.config.ts` rewrites `/api/v1/:path*` → `http://127.0.0.1:8000/api/v1/:path*` and injects `Authorization` server-side. SSE must bypass compression (`compress: false` for the stream route).
+**Transport note:** the browser calls these same-origin; `next.config.ts` rewrites `/api/v1/:path*` → `http://127.0.0.1:8471/api/v1/:path*` and injects `Authorization` server-side. SSE must bypass compression (`compress: false` for the stream route).
 
 ---
 
@@ -898,9 +898,9 @@ SSE_KEEPALIVE_SECONDS      = 15
 | `ATLAS_ENV` | `dev` | backend | `dev|prod` |
 | `ATLAS_DB_PATH` | `<repo>/backend/data/atlas.db` | backend | SQLite file |
 | `ATLAS_STORAGE_ROOT` | `<repo>/storage` | backend, mcp | Artifact root |
-| `ATLAS_BACKEND_URL` | `http://127.0.0.1:8000` | frontend server, mcp | Django base URL |
+| `ATLAS_BACKEND_URL` | `http://127.0.0.1:8471` | frontend server, mcp | Django base URL |
 | `ATLAS_API_TOKEN` | dev-only random | backend, frontend server, mcp | Bearer secret (never shipped to browser) |
-| `ATLAS_WEB_ORIGIN` | `http://localhost:3000` | backend | CORS + SSE `Access-Control-Allow-Origin` |
+| `ATLAS_WEB_ORIGIN` | `http://localhost:3471` | backend | CORS + SSE `Access-Control-Allow-Origin` |
 | `ATLAS_AGENT_ID` | `Agent-Unknown` | mcp | Default `agent_identifier` |
 | `ATLAS_PROJECT_SLUG` | unset | mcp | Default `project_slug` |
 | `ATLAS_LEASE_TTL_SECONDS` | `900` | backend | frozen default |

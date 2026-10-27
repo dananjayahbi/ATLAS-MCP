@@ -1,4 +1,4 @@
-# ATLAS-MCP — Plan Series Index
+﻿# ATLAS-MCP — Plan Series Index
 
 > **Status:** Series v1.0.0 · authored 2026-10-27
 > **Parent specification:** [`master_implementation_plan.md`](./master_implementation_plan.md)
@@ -111,7 +111,7 @@ Each document is:
 | Contract | Value | Defined in |
 | :--- | :--- | :--- |
 | Contract version | `1.0.0` | 01 §1.2 |
-| Ports | Next `3000`, Django `8000` | 01 §2.2 |
+| Ports | Next `3471`, Django `8471` | 01 §2.2 |
 | Task statuses | `PENDING_APPROVAL`, `PENDING`, `IN_PROGRESS`, `IN_REVIEW`, `COMPLETED`, `REJECTED` | 01 §6.2 |
 | Log levels | `DEBUG`, `INFO`, `WARN`, `ERROR` | 01 §6.2 |
 | Event types | 18 values, `noun.verb` form | 01 §6.2 |

@@ -1,0 +1,74 @@
+{
+  "id": "5f2d6c0001-1f0b-4c5b-9a2e-77d0d2f3c901",
+  "project_slug": "alpha",
+  "title": "Fix JWT expiry race condition",
+  "status": "IN_PROGRESS",
+  "priority": 95,
+  "dod_progress_percent": 67,
+  "is_agent_discovered": false,
+  "is_blocked": false,
+  "parent_task_id": null,
+  "age_hours": 27.4,
+  "dependency_weight": 1.5,
+  "assigned_agent_id": "Agent-Claude",
+  "lease_seconds_remaining": 612,
+  "created_at": "2026-10-26T04:46:11.297Z",
+  "updated_at": "2026-10-26T05:10:11.297Z",
+  "description": "Two concurrent refreshes mint a token whose `exp` lands in the same second as the previous one. The refresh handler then reads a token it just rotated out and returns 401.\n\nRepro:\n\n```bash\npytest tests/auth -k race -x\n```",
+  "definition_of_done": [
+    {
+      "id": 1,
+      "label": "Repro test written",
+      "completed": true,
+      "completed_at": "2026-10-27T06:58:11.297Z"
+    },
+    {
+      "id": 2,
+      "label": "Mutex guard added",
+      "completed": true,
+      "completed_at": "2026-10-27T07:22:11.297Z"
+    },
+    {
+      "id": 3,
+      "label": "Migrations added",
+      "completed": false,
+      "completed_at": null
+    }
+  ],
+  "blocked_by": [],
+  "blocks": [
+    "5f2d6c0002-1f0b-4c5b-9a2e-77d0d2f3c902"
+  ],
+  "child_task_ids": [],
+  "discovered_during_task_id": null,
+  "discovery_reason": "",
+  "suggested_priority": null,
+  "review_summary": "",
+  "review_notes": "",
+  "attempt_count": 1,
+  "assets": [
+    {
+      "id": "0c7b1111-2222-4333-8444-555566667777",
+      "kind": "ANNOTATED_CANVAS",
+      "filename": "annotated_canvas.png",
+      "mime_type": "image/png",
+      "byte_size": 184320,
+      "source": "HUMAN",
+      "absolute_path": "E:\\My_GitHub_Repos\\ATLAS-MCP\\storage\\projects\\b3f1c0a4-7d21-4a6e-9f5c-2a1e8d6f0c11\\tasks\\5f2d6c0001-1f0b-4c5b-9a2e-77d0d2f3c901\\input\\annotated_canvas.png",
+      "url": "/api/v1/assets/0c7b1111-2222-4333-8444-555566667777/content",
+      "created_at": "2026-10-26T05:16:11.297Z"
+    },
+    {
+      "id": "0c7b8888-9999-4aaa-8bbb-ccccddddeeee",
+      "kind": "INPUT_SCREENSHOT",
+      "filename": "source_screenshot.png",
+      "mime_type": "image/png",
+      "byte_size": 209715,
+      "source": "HUMAN",
+      "absolute_path": "E:\\My_GitHub_Repos\\ATLAS-MCP\\storage\\projects\\b3f1c0a4-7d21-4a6e-9f5c-2a1e8d6f0c11\\tasks\\5f2d6c0001-1f0b-4c5b-9a2e-77d0d2f3c901\\input\\source_screenshot.png",
+      "url": "/api/v1/assets/0c7b8888-9999-4aaa-8bbb-ccccddddeeee/content",
+      "created_at": "2026-10-26T05:10:11.297Z"
+    }
+  ],
+  "recent_events": []
+}

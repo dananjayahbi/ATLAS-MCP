@@ -1,4 +1,4 @@
-# ATLAS-MCP: Autonomous Agentic Orchestrator & Command Center
+﻿# ATLAS-MCP: Autonomous Agentic Orchestrator & Command Center
 ## Master Architectural Blueprint & Implementation Specification
 
 ---
@@ -16,7 +16,7 @@ A single human software architect can direct multiple distinct agentic CLI insta
 │  - Prioritizes via Percentage Sliders  - Triages Agent Discoveries     │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
-                         HTTPS / SSE│(Port 3000 <-> 8000)
+                         HTTPS / SSE│(Port 3471 <-> 8471)
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │                 ATLAS WEB COMMAND HUD (Next.js 15)                     │

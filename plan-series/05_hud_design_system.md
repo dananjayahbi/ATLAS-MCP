@@ -1,4 +1,4 @@
-# Doc 05 — Tactical Cyber-HUD Design System
+﻿# Doc 05 — Tactical Cyber-HUD Design System
 
 > **Series position:** 05 of 10 · **Owner:** Subagent 5 (Design Engineer)
 > **Parent:** [`master_implementation_plan.md`](./master_implementation_plan.md) §2 (Visual Design System & Command HUD Aesthetic), §6 items 7 & 10, §11 (documents table).
@@ -1098,7 +1098,7 @@ Each item is verifiable by a reviewer reading this doc, or by a rendered Storybo
 | §7.7 | `PriorityMatrixPointDTO.priority` (band), `TelemetrySummaryDTO` (status strip, sparkline) |
 | §7.8 | Error envelope → `AlertBanner` props (`code`, `message`, `request_id`) |
 | §7.9 | SSE `level` → `LogLevelChip`; `ts` → `MachineText` |
-| §2.2 (process inventory) | Frontend runs on port **3000** (`npm --prefix frontend run dev`), backend on **8000**; Doc 05 ships only static styles/components and changes neither port nor any `/api/v1` path |
+| §2.2 (process inventory) | Frontend runs on port **3471** (`npm --prefix frontend run dev`), backend on **8471**; Doc 05 ships only static styles/components and changes neither port nor any `/api/v1` path |
 | §13 | `ATLAS_FEATURE_SOUND` gating (§11) |
 | §15 | `STORAGE_WRITE_FAILED` / `BACKEND_UNAVAILABLE` → critical `AlertBanner` |
 

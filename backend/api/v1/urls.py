@@ -1,0 +1,89 @@
+"""`/api/v1` route table (Doc 01 §12, Doc 04 §2.1)."""
+
+from __future__ import annotations
+
+from django.urls import path
+
+from api.v1.views import assets, discoveries, projects, reviews, tasks, telemetry
+
+urlpatterns = [
+    # Projects
+    path("projects/", projects.ProjectListView.as_view(), name="project-list"),
+    path("projects/<slug:slug>/", projects.ProjectDetailView.as_view(), name="project-detail"),
+    # Tasks
+    path("projects/<slug:slug>/tasks/", tasks.TaskListView.as_view(), name="task-list"),
+    path("tasks/<uuid:task_id>/", tasks.TaskDetailView.as_view(), name="task-detail"),
+    path("tasks/<uuid:task_id>/priority/", tasks.TaskPriorityView.as_view(), name="task-priority"),
+    path(
+        "tasks/<uuid:task_id>/dod/<int:item_id>/",
+        tasks.TaskDodView.as_view(),
+        name="task-dod",
+    ),
+    path(
+        "tasks/<uuid:task_id>/force-release/",
+        tasks.TaskForceReleaseView.as_view(),
+        name="task-force-release",
+    ),
+    path("tasks/<uuid:task_id>/archive/", tasks.TaskArchiveView.as_view(), name="task-archive"),
+    path("tasks/<uuid:task_id>/requeue/", tasks.TaskRequeueView.as_view(), name="task-requeue"),
+    path(
+        "tasks/<uuid:task_id>/claim-for-agent/",
+        tasks.TaskClaimForAgentView.as_view(),
+        name="task-claim-for-agent",
+    ),
+    path("tasks/<uuid:task_id>/events/", tasks.TaskHistoryView.as_view(), name="task-events"),
+    # Discoveries
+    path("discoveries/", discoveries.DiscoveryListView.as_view(), name="discovery-list"),
+    path(
+        "discoveries/<uuid:task_id>/approve/",
+        discoveries.DiscoveryApproveView.as_view(),
+        name="discovery-approve",
+    ),
+    path(
+        "discoveries/<uuid:task_id>/reject/",
+        discoveries.DiscoveryRejectView.as_view(),
+        name="discovery-reject",
+    ),
+    # Reviews
+    path("reviews/", reviews.ReviewListView.as_view(), name="review-list"),
+    path(
+        "reviews/<uuid:task_id>/approve/",
+        reviews.ReviewApproveView.as_view(),
+        name="review-approve",
+    ),
+    path(
+        "reviews/<uuid:task_id>/reject/",
+        reviews.ReviewRejectView.as_view(),
+        name="review-reject",
+    ),
+    # Assets
+    path("assets/", assets.AssetUploadView.as_view(), name="asset-upload"),
+    path("assets/<uuid:asset_id>/", assets.AssetDetailView.as_view(), name="asset-detail"),
+    path(
+        "assets/<uuid:asset_id>/content",
+        assets.AssetContentView.as_view(),
+        name="asset-content",
+    ),
+    path(
+        "assets/<uuid:asset_id>/download",
+        assets.AssetContentView.as_view(),
+        name="asset-download",
+    ),
+    # Telemetry
+    path(
+        "telemetry/summary",
+        telemetry.TelemetrySummaryView.as_view(),
+        name="telemetry-summary",
+    ),
+    path(
+        "priority-matrix",
+        telemetry.PriorityMatrixView.as_view(),
+        name="priority-matrix",
+    ),
+    # SSE
+    path("stream/events", __import__("api.sse", fromlist=["events_stream"]).events_stream,
+         name="stream-events"),
+    path("stream/tasks/<uuid:task_id>/log",
+         __import__("api.sse", fromlist=["task_log_stream"]).task_log_stream,
+         name="stream-task-log"),
+]
