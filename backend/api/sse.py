@@ -6,26 +6,17 @@ Frames use the frozen §7.9 envelope, `seq` for `Last-Event-ID` replay, and a
 
 from __future__ import annotations
 
-import json
-import logging
-import queue
-import time
+import asyncio
 
 from django.conf import settings
 from django.http import StreamingHttpResponse
 from django.views.decorators.http import require_GET
 
 from api.common.auth import require_token
-from core.enums import EventType
+from api.sse_stream import drain_queue, is_visible
 from core.errors import AtlasError, TaskNotFound
-from core.events import Envelope, bus, last_seq, replay, reset_frame
+from core.events import Envelope, bus, replay, reset_frame
 from core.models import Project, Task
-
-logger = logging.getLogger("atlas.sse")
-
-KEEPALIVE_SECONDS = int(getattr(settings, "ATLAS_SSE_KEEPALIVE_SECONDS", 15))
-#: Comments/heartbeat budget per connection before the client must reconnect.
-MAX_FRAMES = 10_000
 
 
 def _sse_headers() -> dict[str, str]:
@@ -70,48 +61,49 @@ def _param(request, name: str) -> str:
     return request.GET.get(name) or ""
 
 
-def _stream(request, *, project: Project, task_id=None, replay_only=False):
-    """Generator shared by both routes."""
+def _initial_frames(request, project, task_id):
+    """Resume payload, computed off the event loop.
+
+    Django forbids ORM access from an async context (`SynchronousOnlyOperation`),
+    so `_stream_async` calls this via `asyncio.to_thread`.
+    """
     after = _last_event_seq(request, project.pk)
+    frames = [
+        _frame(envelope)
+        for envelope in replay(project.pk, after_seq=after, limit=500)
+        if is_visible(envelope=envelope, task_id=task_id)
+    ]
+    if after == 0:
+        frames.append(_frame(reset_frame(project.slug)))
+    return after, frames
+
+
+async def _stream_async(request, *, project: Project, task_id=None, replay_only=False):
+    """Async generator shared by both routes.
+
+    Must be `async def` — see the module docstring of `api.sse_stream`.
+    """
+    after, frames = await asyncio.to_thread(_initial_frames, request, project, task_id)
     q = bus.subscribe(project.slug)
-    deadline = time.monotonic() + 60 * 60  # hard cap; EventSource reconnects
-    frames = 0
 
     try:
-        # 1. Resume: replay everything the client missed.
-        for envelope in replay(project.pk, after_seq=after, limit=500):
-            if task_id and envelope.task_id != str(task_id):
-                continue
-            yield _frame(envelope)
-            frames += 1
-
-        # 2. Reset signal so the client can drop stale local state.
-        if after == 0:
-            yield _frame(reset_frame(project.slug))
+        # 1. Resume: replay everything the client missed (+ reset when fresh).
+        for frame in frames:
+            yield frame
 
         if replay_only:
             yield _comment("replay complete")
             return
 
-        # 3. Live fan-out with keepalive.
-        last_write = time.monotonic()
-        while time.monotonic() < deadline and frames < MAX_FRAMES:
-            try:
-                envelope = q.get(timeout=1.0)
-            except queue.Empty:
-                if time.monotonic() - last_write >= KEEPALIVE_SECONDS:
-                    yield _comment("ping")
-                    last_write = time.monotonic()
+        # 2. Live fan-out with keepalive.
+        async for kind, envelope in drain_queue(q):
+            if kind == "keepalive":
+                yield _comment("ping")
                 continue
-            if task_id and envelope.task_id != str(task_id):
-                continue
-            # R1: the project channel never carries raw task.log frames.
-            if task_id is None and envelope.type == EventType.TASK_LOG:
+            if not is_visible(envelope=envelope, task_id=task_id):
                 continue
             yield _frame(envelope)
-            last_write = time.monotonic()
-            frames += 1
-    except GeneratorExit:  # client disconnected
+    except (GeneratorExit, asyncio.CancelledError):  # client disconnected
         return
     finally:
         bus.unsubscribe(project.slug, q)
@@ -139,7 +131,7 @@ def events_stream(request):
         return JsonResponse(err.to_envelope(), status=err.http_status)
 
     response = StreamingHttpResponse(
-        _stream(request, project=project), content_type="text/event-stream"
+        _stream_async(request, project=project), content_type="text/event-stream"
     )
     for key, value in _sse_headers().items():
         response[key] = value
@@ -168,7 +160,7 @@ def task_log_stream(request, task_id):
         return JsonResponse(err.to_envelope(), status=err.http_status)
 
     response = StreamingHttpResponse(
-        _stream(request, project=task.project, task_id=task.pk),
+        _stream_async(request, project=task.project, task_id=task.pk),
         content_type="text/event-stream",
     )
     for key, value in _sse_headers().items():

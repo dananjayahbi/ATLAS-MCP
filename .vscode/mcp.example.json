@@ -1,0 +1,26 @@
+{
+  "servers": {
+    "atlas": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": ["-m", "mcp_server"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "ATLAS_BACKEND_URL": "http://127.0.0.1:8471",
+        "ATLAS_API_TOKEN": "${input:atlas-api-token}",
+        "ATLAS_AGENT_ID": "Agent-Copilot",
+        "ATLAS_PROJECT_SLUG": "alpha",
+        "ATLAS_STORAGE_ROOT": "${workspaceFolder}/storage",
+        "ATLAS_LOG_LEVEL": "INFO"
+      }
+    }
+  },
+  "inputs": [
+    {
+      "id": "atlas-api-token",
+      "type": "promptString",
+      "description": "ATLAS_API_TOKEN (from .env). Stored by VS Code, never written to disk.",
+      "password": true
+    }
+  ]
+}

@@ -1,6 +1,19 @@
+import path from "node:path";
+
 import { defineConfig, devices } from "@playwright/test";
 
 const WEB = process.env.ATLAS_WEB_URL ?? "http://127.0.0.1:3471";
+const API = process.env.ATLAS_API_URL ?? "http://127.0.0.1:8471";
+
+const FRONTEND = __dirname;
+const BACKEND = path.resolve(FRONTEND, "..", "backend");
+
+// Absolute, native-separator paths: cmd.exe treats `/` in a command position as
+// a switch, so `../.venv/Scripts/python.exe` is unparseable on Windows.
+const PY =
+  process.env.ATLAS_PYTHON ??
+  path.resolve(FRONTEND, "..", ".venv", "Scripts", "python.exe");
+const PYTHON = PY.replace(/\\/g, "\\\\");
 
 export default defineConfig({
   testDir: "./e2e",
@@ -18,14 +31,26 @@ export default defineConfig({
     video: "off",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
-  // The dev servers are started by `scripts/bootstrap_dev.py` in CI; locally
-  // run `npm run dev` + the Django server first.
+  // The HUD proxies every request to Django, so a backend is mandatory. Both
+  // servers are started here unless ATLAS_E2E_NO_SERVER says they already run
+  // (that is what `start-atlas.bat` + `npm run test:e2e` does).
   webServer: process.env.ATLAS_E2E_NO_SERVER
     ? undefined
-    : {
-        command: "npm run dev",
-        url: WEB,
-        reuseExistingServer: true,
-        timeout: 120_000,
-      },
+    : [
+        {
+          command: `"${PYTHON}" -m uvicorn atlas.asgi:application --host 127.0.0.1 --port 8471 --no-access-log`,
+          cwd: BACKEND,
+          url: `${API}/healthz`,
+          reuseExistingServer: !process.env.CI,
+          timeout: 120_000,
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+        {
+          command: "npm run dev",
+          url: WEB,
+          reuseExistingServer: !process.env.CI,
+          timeout: 120_000,
+        },
+      ],
 });

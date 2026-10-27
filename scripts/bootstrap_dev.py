@@ -82,6 +82,18 @@ def run(args: list[str]) -> None:
     subprocess.run(args, cwd=REPO / "backend", env=env, check=True)
 
 
+def run_script(relative: str) -> None:
+    """Run a repo script in-process-safe mode; a failure is reported, not fatal."""
+    script = REPO / "scripts" / relative
+    if not script.is_file():
+        print(f"· skipped {relative} (not found)")
+        return
+    print(f"$ {PY} scripts/{relative}")
+    result = subprocess.run([PY, str(script)], cwd=REPO)
+    if result.returncode != 0:
+        print(f"· {relative} exited {result.returncode} (see output above)")
+
+
 def mcp_snippet(token: str) -> str:
     server = {
         "command": PY,
@@ -124,13 +136,18 @@ def main() -> int:
 
     run([PY, "manage.py", "migrate", "--noinput"])
 
+    # VS Code MCP config + the Next.js copy of the server-side env.
+    run_script("write_mcp_config.py")
+    run_script("launcher/sync_env.py")
+
     print("\n✓ bootstrap complete\n")
     print(mcp_snippet(token))
     print(
         "\nNext:\n"
-        "  backend : cd backend && ../.venv/Scripts/python manage.py runserver 127.0.0.1:8471\n"
-        "  frontend: cd frontend && npm run dev\n"
-        "  seed    : python scripts/seed_demo.py\n"
+        "  start the stack : start-atlas.bat        (two CMD windows)\n"
+        "  seed demo data  : .venv\\Scripts\\python.exe scripts\\seed_demo.py\n"
+        "  verify the MCP  : .venv\\Scripts\\python.exe scripts\\mcp_probe.py\n"
+        "\n  VS Code MCP is pre-configured in .vscode\\mcp.json\n"
     )
     return 0
 
