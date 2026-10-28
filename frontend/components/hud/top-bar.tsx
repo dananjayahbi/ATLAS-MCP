@@ -70,6 +70,7 @@ export function TopBar({
       { href: "/", label: "Command", match: (p: string) => p === "/" },
       { href: "/discoveries", label: "Triage", match: (p: string) => p.startsWith("/discoveries") },
       { href: "/reviews", label: "Reviews", match: (p: string) => p.startsWith("/reviews") },
+      { href: "/archive", label: "Archive", match: (p: string) => p.startsWith("/archive") },
     ],
     [],
   );

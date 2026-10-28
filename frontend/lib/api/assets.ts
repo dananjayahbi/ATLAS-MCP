@@ -1,6 +1,6 @@
 import type { AssetDTO } from "@/lib/types/enums";
 import type { AssetKind } from "@/lib/types/enums";
-import { apiGet, apiUpload } from "./client";
+import { apiDelete, apiGet, apiUpload } from "./client";
 
 /**
  * Doc 01 §12 / Doc 06 §3.2 — assets are rendered by URL only, never fetched into
@@ -16,6 +16,11 @@ export type AssetPreview = {
   filename: string;
   mime_type: string;
   url: string;
+  /** Content hash; the only cache-buster for burn-in, which keeps the id. */
+  version?: string;
+  /** Present on the task-scoped preview read (`?task_id=`). */
+  byte_size?: number;
+  created_at?: string;
 };
 
 export type TaskAssetPreview = {
@@ -39,8 +44,17 @@ export type AnnotationWriteResponse = {
   replaced_source: boolean;
 };
 
+/**
+ * Cache-busting image URL. Burn-in rewrites an asset's bytes under the same id,
+ * so a URL that ignores `version` would keep showing the pre-markup pixels.
+ */
+export function assetContentUrl(assetId: string, version?: string | null): string {
+  const base = `/api/v1/assets/${encodeURIComponent(assetId)}/content`;
+  return version ? `${base}?v=${encodeURIComponent(version)}` : base;
+}
+
 export const assetsApi = {
-  contentUrl: (assetId: string): string => `/api/v1/assets/${encodeURIComponent(assetId)}/content`,
+  contentUrl: (assetId: string, version?: string | null): string => assetContentUrl(assetId, version),
   downloadUrl: (assetId: string): string => `/api/v1/assets/${encodeURIComponent(assetId)}/download`,
   upload: (taskId: string, kind: AssetKind, file: File) => {
     const form = new FormData();
@@ -49,10 +63,15 @@ export const assetsApi = {
     form.set("file", file);
     return apiUpload<AssetDTO>("/assets/", form);
   },
-  /** Batched board thumbnails: 3 newest images per task plus the true total. */
-  previews: (slug: string, signal?: AbortSignal) =>
+  /** Removes one attachment, row and bytes. */
+  remove: (assetId: string) => apiDelete<void>(`/assets/${encodeURIComponent(assetId)}/`),
+  /**
+   * Batched board thumbnails: 3 newest images per task plus the true total.
+   * `taskId` widens the cap so the task editor can list every image on a task.
+   */
+  previews: (slug: string, signal?: AbortSignal, taskId?: string) =>
     apiGet<{ items: TaskAssetPreview[]; next_cursor: string | null }>(
-      `/projects/${encodeURIComponent(slug)}/assets/`,
+      `/projects/${encodeURIComponent(slug)}/assets/${taskId ? `?task_id=${encodeURIComponent(taskId)}` : ""}`,
       { signal },
     ),
   annotation: (assetId: string, signal?: AbortSignal) =>
@@ -60,17 +79,22 @@ export const assetsApi = {
   /**
    * Flatten-on-save: the PNG is the burn-in, `document` keeps the markup
    * editable, and `replaceSource` overwrites the original bytes in place.
+   *
+   * `replaceOnly` is the markup modal's "one edited image" contract: burn onto
+   * the source and skip the extra `ANNOTATED_CANVAS` duplicate.
    */
   saveAnnotation: (
     assetId: string,
     file: Blob,
     document: CanvasDocumentPayload | null,
     replaceSource: boolean,
+    replaceOnly = false,
   ) => {
     const form = new FormData();
     form.set("file", file, "annotated_canvas.png");
     if (document) form.set("document", JSON.stringify(document));
     if (replaceSource) form.set("replace_source", "1");
+    if (replaceOnly) form.set("replace_only", "1");
     return apiUpload<AnnotationWriteResponse>(
       `/assets/${encodeURIComponent(assetId)}/annotation/`,
       form,

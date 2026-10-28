@@ -28,6 +28,14 @@ export type TaskBoardViewProps = {
   previewFor?: (taskId: string) => { images: readonly AssetPreview[]; total: number } | undefined;
   onOpenImage?: (taskId: string, assetId: string) => void;
   onEditTask?: (id: string) => void;
+  /** T12 archive from a card's overflow menu. */
+  onArchiveTask?: (id: string) => void;
+  /** T13 restore, used by the archive page. */
+  onRestoreTask?: (id: string) => void;
+  /** Opens the delete confirmation; `null` hides the entry. */
+  onDeleteTask?: (id: string) => void;
+  /** Id of the row whose mutation is in flight, so its menu disables. */
+  busyTaskId?: string | null;
   /**
    * Drag-and-drop status change. Only wired when grouping by status: dropping
    * onto a priority band has no status meaning.
@@ -69,6 +77,10 @@ export function TaskBoardView({
   previewFor,
   onOpenImage,
   onEditTask,
+  onArchiveTask,
+  onRestoreTask,
+  onDeleteTask,
+  busyTaskId,
   onMoveTask,
   draggingStatus,
   className,
@@ -133,6 +145,10 @@ export function TaskBoardView({
                 thumbnailTotal={previewFor?.(task.id)?.total}
                 onOpenImage={onOpenImage}
                 onEdit={onEditTask}
+                onArchive={onArchiveTask}
+                onRestore={onRestoreTask}
+                onDelete={onDeleteTask}
+                busy={busyTaskId === task.id}
                 draggable={group === "status" && Boolean(onMoveTask)}
                 compact
               />

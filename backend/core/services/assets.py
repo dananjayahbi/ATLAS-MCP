@@ -25,6 +25,9 @@ def to_dto(asset: Asset) -> dict:
         "source": asset.source,
         "absolute_path": to_absolute_native(asset.relative_path),
         "url": asset_url(asset),
+        # Content hash: burn-in rewrites an asset's bytes under a stable id, so
+        # this is the only reliable cache-buster for the rendered image.
+        "version": asset.sha256,
         "created_at": _iso(asset.created_at),
     }
 

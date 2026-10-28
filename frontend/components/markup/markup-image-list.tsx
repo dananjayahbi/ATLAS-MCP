@@ -2,6 +2,7 @@
 
 import { cn } from "@/lib/format/cn";
 import { formatBytes } from "@/lib/format/bytes";
+import { assetsApi } from "@/lib/api/assets";
 
 /** Right-hand image list of the markup modal. */
 
@@ -13,6 +14,8 @@ export type MarkupImageEntry = {
   byteSize?: number;
   kind?: string;
   annotated?: boolean;
+  /** Content hash, so the modal repaints after a burn-in rewrites the bytes. */
+  version?: string;
 };
 
 export type MarkupImageListProps = {
@@ -52,7 +55,7 @@ export function MarkupImageList({ images, activeId, onSelect, className }: Marku
                 {/* Plain <img>: the source is a same-origin API route that next/image cannot optimise. */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={image.url}
+                  src={assetsApi.contentUrl(image.id, image.version)}
                   alt=""
                   loading="lazy"
                   className="size-12 shrink-0 rounded-chip border border-grid object-cover"
@@ -78,7 +81,7 @@ export function MarkupImageList({ images, activeId, onSelect, className }: Marku
       </ul>
 
       <p className="border-t border-grid px-2 py-1 text-hud-micro text-disabled">
-        Saving burns the markup into a new PNG and keeps the original.
+        Markup is burned onto the selected image only. Other images stay untouched.
       </p>
     </aside>
   );

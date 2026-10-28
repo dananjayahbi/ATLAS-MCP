@@ -361,15 +361,23 @@ def reject_review(*, task_id, note: str, actor: str = "human") -> Task:
 # ---------------------------------------------------------------------------
 @transaction.atomic
 def archive_task(*, task_id, actor: str = "human") -> Task:
+    """T12 — remove a task from every working surface, reversibly.
+
+    Archive is expressed as `REJECTED` + `archived_at`, so the reviewer's
+    rejected-but-live work (which the operator can requeue) stays distinct from
+    work the operator deliberately filed away.
+    """
     task = get_task(task_id)
     if task.status not in (TaskStatus.PENDING, TaskStatus.REJECTED):
         raise InvalidTransition(task.status, "archive_task")
 
     now = utcnow()
-    Task.objects.filter(pk=task.pk).update(status=TaskStatus.REJECTED, updated_at=now)
+    Task.objects.filter(pk=task.pk).update(
+        status=TaskStatus.REJECTED, archived_at=now, updated_at=now
+    )
     task.refresh_from_db()
     audit(project=task.project, event=AuditEvent.TASK_STATUS, task_id=task.pk,
-          actor=actor, detail={"to": TaskStatus.REJECTED})
+          actor=actor, detail={"to": TaskStatus.REJECTED, "archived": True})
     emit(project=task.project, task=task, type=EventType.TASK_STATUS_CHANGED,
          message=f"{TaskStatus.PENDING} -> {TaskStatus.REJECTED} (archived)")
     return task
@@ -384,7 +392,7 @@ def requeue_task(*, task_id, actor: str = "human") -> Task:
 
     now = utcnow()
     Task.objects.filter(pk=task.pk, status=TaskStatus.REJECTED).update(
-        status=TaskStatus.PENDING, review_notes="", updated_at=now
+        status=TaskStatus.PENDING, review_notes="", archived_at=None, updated_at=now
     )
     task.refresh_from_db()
     audit(project=task.project, event=AuditEvent.TASK_STATUS, task_id=task.pk,
@@ -558,6 +566,19 @@ def set_assignee(*, task_id, agent_identifier: str | None, actor: str = "human")
          message=f"Assignee set to {value or 'unassigned'}: {task.title}",
          payload={"assigned_agent_id": value})
     return task
+
+
+@transaction.atomic
+def restore_task(*, task_id, actor: str = "human") -> Task:
+    """Un-archive: clear `archived_at` and put the task back in the queue (T13).
+
+    Archive is expressed as `REJECTED + archived_at`, so restoring is exactly the
+    requeue transition plus clearing the archive stamp.
+    """
+    task = get_task(task_id)
+    if task.archived_at is None:
+        raise InvalidTransition(task.status, "restore_task", "Task is not archived.")
+    return requeue_task(task_id=task.pk, actor=actor)
 
 
 @transaction.atomic
@@ -808,6 +829,8 @@ __all__ = [
     "reject_review",
     "archive_task",
     "requeue_task",
+    "restore_task",
+    "delete_task",
     "set_priority",
     "update_dod_item",
     "spawn_subtask",

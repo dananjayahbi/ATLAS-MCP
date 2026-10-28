@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/format/cn";
-import type { AssetPreview } from "@/lib/api/assets";
+import { assetsApi, type AssetPreview } from "@/lib/api/assets";
 
 /**
  * The dashboard thumbnail grid on a task card (Doc 06 §7.2 row 3).
@@ -42,7 +42,7 @@ export function TaskThumbnailGrid({ images, total, onOpen, className }: TaskThum
         >
           {/* eslint-disable-next-line @next/next/no-img-element -- same-origin API route, fixed box */}
           <img
-            src={image.url}
+            src={assetsApi.contentUrl(image.id, image.version)}
             alt=""
             loading="lazy"
             className="size-full object-cover transition-transform duration-150 group-hover/thumb:scale-105"

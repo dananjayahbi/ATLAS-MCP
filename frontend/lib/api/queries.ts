@@ -29,6 +29,16 @@ export function useProjects(): UseQueryResult<ListResponse<ProjectDTO>> {
   });
 }
 
+/** The archive page's read: archived projects only, never the live list. */
+export function useArchivedProjects(): UseQueryResult<ListResponse<ProjectDTO>> {
+  return useQuery({
+    queryKey: qk.projects.archived(),
+    queryFn: ({ signal }) => projectsApi.list(signal, { archived: true }),
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+  });
+}
+
 export function useProject(slug: string): UseQueryResult<ProjectDTO> {
   return useQuery({
     queryKey: qk.projects.detail(slug),
@@ -58,6 +68,7 @@ export function useTasks(
           blocked: filter.blocked ?? null,
           discovered: filter.discovered ?? null,
           priorityMin: filter.priorityMin ?? null,
+          archived: filter.archived ?? null,
           sort: filter.sort ?? null,
           order: filter.order ?? null,
         },
@@ -66,6 +77,22 @@ export function useTasks(
     staleTime: 15_000,
     refetchInterval: 30_000,
     placeholderData: keepPreviousData,
+    enabled: slug.length > 0,
+  });
+}
+
+/**
+ * Archived tasks for one project. The archive page uses this instead of a
+ * status filter: `archived_at` is the archive, `REJECTED` is a review verdict,
+ * and conflating them would hide rejected-but-live work.
+ */
+export function useArchivedTasks(slug: string): UseQueryResult<ListResponse<TaskSummaryDTO>> {
+  const fk = `archived:${slug}`;
+  return useQuery({
+    queryKey: qk.tasks.archived(fk),
+    queryFn: ({ signal }) => tasksApi.list(slug, { archived: true, sort: "updated" }, signal),
+    staleTime: 15_000,
+    refetchInterval: 30_000,
     enabled: slug.length > 0,
   });
 }

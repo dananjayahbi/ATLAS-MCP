@@ -10,6 +10,7 @@ import { reviewsApi } from "./reviews";
 import { tasksApi, type TaskCreateBody, type TaskUpdateBody } from "./tasks";
 import type { TaskStatus } from "@/lib/types/enums";
 import type { MatrixXAxis } from "./telemetry";
+import { assetsApi } from "./assets";
 
 /**
  * Doc 06 §3.5 — exactly two optimistic mutations (priority, DoD). Status/review
@@ -229,6 +230,30 @@ export function useDeleteTask(): UseMutationResult<void, ApiError, { id: string 
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: qk.tasks.root });
       void queryClient.invalidateQueries({ queryKey: qk.projects.root });
+      void queryClient.invalidateQueries({ queryKey: qk.assets.root });
+      void queryClient.invalidateQueries({ queryKey: qk.telemetry.root });
+    },
+  });
+}
+
+/**
+ * T12/T13 from the operator surface. Archive hides the task from every board
+ * read; restore returns it to PENDING. Both are reversible, so neither item is
+ * behind a destructive-only confirm.
+ */
+export function useArchiveTask(): UseMutationResult<
+  TaskSummaryDTO,
+  ApiError,
+  { id: string; archived?: boolean }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<TaskSummaryDTO, ApiError, { id: string; archived?: boolean }>({
+    mutationFn: ({ id, archived = true }) => tasksApi.archive(id, archived),
+    onSettled: (_data, _error, variables) => {
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.detail(variables.id) });
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.root });
+      void queryClient.invalidateQueries({ queryKey: qk.projects.root });
+      void queryClient.invalidateQueries({ queryKey: qk.assets.root });
       void queryClient.invalidateQueries({ queryKey: qk.telemetry.root });
     },
   });
@@ -300,6 +325,35 @@ export function useArchiveProject(): UseMutationResult<
       void queryClient.invalidateQueries({ queryKey: qk.projects.detail(variables.slug) });
       void queryClient.invalidateQueries({ queryKey: qk.tasks.root });
       void queryClient.invalidateQueries({ queryKey: qk.telemetry.root });
+    },
+  });
+}
+
+/** Permanent delete, offered only on the archive page. */
+export function usePurgeProject(): UseMutationResult<void, ApiError, { slug: string }> {
+  const queryClient = useQueryClient();
+  return useMutation<void, ApiError, { slug: string }>({
+    mutationFn: ({ slug }) => projectsApi.purge(slug),
+    onSuccess: (_data, variables) => {
+      queryClient.removeQueries({ queryKey: qk.projects.detail(variables.slug) });
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.projects.root });
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.root });
+      void queryClient.invalidateQueries({ queryKey: qk.assets.root });
+      void queryClient.invalidateQueries({ queryKey: qk.telemetry.root });
+    },
+  });
+}
+
+/** Removes one attachment; the task editor's image list owns the trigger. */
+export function useDeleteAsset(): UseMutationResult<void, ApiError, { id: string }> {
+  const queryClient = useQueryClient();
+  return useMutation<void, ApiError, { id: string }>({
+    mutationFn: ({ id }) => assetsApi.remove(id),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.assets.root });
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.root });
     },
   });
 }

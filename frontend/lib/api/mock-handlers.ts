@@ -30,6 +30,7 @@ export function createTaskFromDiscovery(discovery: DiscoveryDTO): TaskSummaryDTO
     lease_seconds_remaining: null,
     created_at: discovery.created_at ?? now,
     updated_at: now,
+    archived_at: null,
   };
   db.tasks[task.id] = task;
   return task;
@@ -62,7 +63,7 @@ export function toggleDodItem(id: string, itemId: number, completed: boolean) {
   return clone(detail);
 }
 
-export function applyTaskAction(id: string, action: string) {
+export function applyTaskAction(id: string, action: string, archived: boolean | null = null) {
   const detail = detailFor(id);
   if (!detail) throw notFound(`Task ${id}`);
   if (action === "force-release" && detail.status !== "IN_PROGRESS") {
@@ -71,11 +72,21 @@ export function applyTaskAction(id: string, action: string) {
   if (action === "requeue" && detail.status !== "REJECTED") {
     throw invalidTransition("requeue", detail.status);
   }
-  detail.status = action === "archive" ? "REJECTED" : "PENDING";
+  // `POST /archive/` is a toggle: `{archived: false}` restores, and a body with
+  // no flag means "archive". Restore is the requeue transition plus a cleared stamp.
+  const restoring = action === "archive" && archived === false;
+  if (action === "archive" && !restoring && detail.archived_at === null && detail.status !== "PENDING" && detail.status !== "REJECTED") {
+    throw invalidTransition("archive_task", detail.status);
+  }
+  if (restoring && detail.archived_at === null) {
+    throw invalidTransition("restore_task", detail.status);
+  }
+  detail.archived_at = restoring ? null : action === "archive" ? new Date().toISOString() : detail.archived_at;
+  detail.status = action === "archive" && !restoring ? "REJECTED" : "PENDING";
   detail.assigned_agent_id = null;
   detail.lease_seconds_remaining = null;
   db.tasks[id] = { ...db.tasks[id], ...stripDetail(detail) };
-  db.reviews = db.reviews.filter((review) => review.id !== id);
+  if (!restoring) db.reviews = db.reviews.filter((review) => review.id !== id);
   syncCounters();
   return clone(db.tasks[id]);
 }
@@ -140,6 +151,7 @@ export function createTask(slug: string, payload: MockBody): TaskSummaryDTO {
     lease_seconds_remaining: null,
     created_at: now,
     updated_at: now,
+    archived_at: null,
   };
   db.tasks[task.id] = task;
   syncCounters();

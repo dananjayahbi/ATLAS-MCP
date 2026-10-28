@@ -72,24 +72,82 @@ export function MarkupModal({
   const confirmingRef = useRef(false);
   confirmingRef.current = confirming;
 
+  const initial = useMemo(() => ({ strokes: [], width: 1, height: 1 }) as MarkupDocument, []);
+  const history = useMarkupHistory(initial);
+  const seededForRef = useRef<string | null>(null);
+
+  /**
+   * Switching images must also switch documents, and the reset has to happen in
+   * the same tick as the selection — otherwise the previous image's strokes
+   * paint over the new one (the reported "highlights appear on all images").
+   */
+  const selectImage = useCallback(
+    (id: string | null) => {
+      setCurrentId(id);
+      setLoadedDocument(null);
+      seededForRef.current = null;
+      history.reset(initial);
+    },
+    [history, initial],
+  );
+
+  // The seed effect below runs before `selectImage` exists in declaration order,
+  // so it reaches the latest callback through a ref.
+  const selectImageRef = useRef(selectImage);
+  selectImageRef.current = selectImage;
+
+  // Seed the selection once per open. `images` is a fresh array on every parent
+  // render, so depending on it would re-assert the image the operator opened
+  // with and yank them back from whatever the rail had selected.
+  const seedRef = useRef<{ open: boolean; assetId: string | null }>({ open: false, assetId: null });
   useEffect(() => {
-    if (open) setCurrentId(assetId ?? images[0]?.id ?? null);
-  }, [open, assetId, images]);
+    if (!open) {
+      seedRef.current = { open: false, assetId: null };
+      return;
+    }
+    if (seedRef.current.open && seedRef.current.assetId === assetId) return;
+    seedRef.current = { open: true, assetId };
+    selectImageRef.current(assetId ?? images[0]?.id ?? null);
+    // `images` is intentionally read but not depended on: it is the fallback
+    // only, and re-running on its identity change is the bug this guards.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, assetId]);
 
   const active = useMemo(
     () => images.find((image) => image.id === currentId) ?? null,
     [images, currentId],
   );
 
-  const initial = useMemo(() => ({ strokes: [], width: 1, height: 1 }) as MarkupDocument, []);
-  const history = useMarkupHistory(loadedDocument ?? initial);
+  /**
+   * The burn-in target URL. `version` is the asset's content hash, so a save
+   * mutates the URL and the <img> both repaints and re-decodes at natural size.
+   */
+  const activeImageUrl = useMemo(
+    () => (active ? assetsApi.contentUrl(active.id, active.version) : ""),
+    [active],
+  );
 
-  // Re-seed history whenever the operator switches image or a stored document loads.
+  /**
+   * Applies a stored document exactly once per (image, bitmap size) pair.
+   *
+   * Two effects feed this: the fetch (placeholder 1×1 document) and the bitmap
+   * decode (real dimensions). Keying on both means the re-projection lands, while
+   * the guard keeps a re-render from looping through `history.reset`.
+   */
   useEffect(() => {
-    if (loadedDocument) history.reset(loadedDocument);
+    if (!open || !currentId) {
+      seededForRef.current = null;
+      return;
+    }
+    const key = loadedDocument
+      ? `${currentId}:${loadedDocument.width}x${loadedDocument.height}`
+      : `${currentId}:empty`;
+    if (seededForRef.current === key) return;
+    seededForRef.current = key;
+    history.reset(loadedDocument ?? initial);
     // `history.reset` is stable; depending on the object would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadedDocument]);
+  }, [open, currentId, loadedDocument, initial]);
 
   /* ------------------------------------------------ load the stored markup */
 
@@ -102,9 +160,9 @@ export function MarkupModal({
       .annotation(currentId)
       .then((payload) => {
         if (cancelled) return;
-        const document = payload.document
-          ? fromSnapshot(payload.document, size ? { width: size.w, height: size.h } : { width: 1, height: 1 })
-          : null;
+        // The document's own image space comes from the bitmap once it loads, so
+        // seed with a placeholder and let the size effect below re-project it.
+        const document = payload.document ? fromSnapshot(payload.document, { width: 1, height: 1 }) : null;
         if (document) setLoadedDocument(document);
       })
       .catch(() => {
@@ -114,14 +172,22 @@ export function MarkupModal({
     return () => {
       cancelled = true;
     };
-    // `size` is intentionally absent: it is not known before the image loads.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, currentId]);
+
+  // Once the bitmap is decoded, replace the placeholder dimensions so burn-in
+  // paints at natural resolution instead of 1×1.
+  useEffect(() => {
+    if (!loadedDocument || !size) return;
+    if (loadedDocument.width === size.w && loadedDocument.height === size.h) return;
+    setLoadedDocument({ ...loadedDocument, width: size.w, height: size.h });
+    // Re-running on every `loadedDocument` change would loop on the new object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [size]);
 
   /* ------------------------------------------------ image element for burn-in */
 
   const canvas = useMarkupCanvas({
-    imageUrl: active ? assetsApi.contentUrl(active.id) : "",
+    imageUrl: activeImageUrl,
     tool,
     color,
     width,
@@ -217,6 +283,7 @@ export function MarkupModal({
         flattened,
         { version: 1, strokes: history.doc.strokes },
         true,
+        true,
       );
       // A fresh fingerprint, not a fresh component: the <img> src is stable but
       // the bytes changed, so every preview must drop its cached copy.
@@ -253,7 +320,8 @@ export function MarkupModal({
         </span>
         <Button size="sm" onClick={onClose} disabled={saving}>
           Close <Kbd size="xs">Esc</Kbd>
-        </Button>        <Button
+        </Button>
+        <Button
           size="sm"
           variant="primary"
           onClick={() => setConfirming(true)}
@@ -304,7 +372,7 @@ export function MarkupModal({
             {active ? (
               /* eslint-disable-next-line @next/next/no-img-element -- positioned by the canvas transform */
               <img
-                src={assetsApi.contentUrl(active.id)}
+                src={activeImageUrl}
                 alt={active.label}
                 draggable={false}
                 className="pointer-events-none absolute left-0 top-0 origin-top-left select-none"
@@ -330,7 +398,7 @@ export function MarkupModal({
           </div>
         </div>
 
-        <MarkupImageList images={images} activeId={currentId ?? ""} onSelect={setCurrentId} />
+        <MarkupImageList images={images} activeId={currentId ?? ""} onSelect={selectImage} />
       </div>
 
       {confirming ? (
@@ -343,8 +411,9 @@ export function MarkupModal({
             <h3 className="text-hud-label uppercase tracking-[0.06em] text-primary">Burn markup into the image?</h3>
             <p className="mt-1 text-hud-body text-secondary">
               {strokeCount(history.doc)} stroke{strokeCount(history.doc) === 1 ? "" : "s"} will be flattened
-              over <span className="font-machine text-primary">{active?.label ?? "this image"}</span>. The
-              original file is kept and the annotated copy becomes the attachment the agent reads.
+              onto <span className="font-machine text-primary">{active?.label ?? "this image"}</span> and saved
+              as that one image — no duplicate copy is created. The strokes become pixels, so the editor
+              reopens blank.
             </p>
             <div className="mt-2 flex items-center justify-end gap-1">
               <Button size="sm" onClick={() => setConfirming(false)} disabled={saving}>

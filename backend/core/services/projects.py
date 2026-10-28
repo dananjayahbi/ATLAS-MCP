@@ -109,3 +109,23 @@ def restore_project(project: Project) -> Project:
     audit(project=project, event=AuditEvent.PROJECT_RESTORED,
           detail={"slug": project.slug})
     return project
+
+
+@transaction.atomic
+def purge_project(project: Project) -> None:
+    """Permanently delete a project: rows, tasks, assets and its storage folder.
+
+    Archiving is the normal removal (Doc 04 §5.1). Purging only exists for the
+    archive page, where the operator has already filed the project away and
+    chooses to erase it, so it requires the slug echoed back as confirmation.
+    """
+    import shutil
+
+    project_pk = project.pk
+    slug = project.slug
+    audit(project=project, event=AuditEvent.PROJECT_ARCHIVED,
+          detail={"slug": slug, "purged": True})
+    project.delete()
+    # The folder holds evidence no row points at any more; leaving it would
+    # silently re-appear as orphans in `storage/projects/`.
+    shutil.rmtree(router.project_dir(project_pk), ignore_errors=True)

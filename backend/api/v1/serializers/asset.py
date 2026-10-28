@@ -12,6 +12,7 @@ class AssetSerializer(serializers.ModelSerializer):
     id = serializers.UUIDField(read_only=True)
     absolute_path = serializers.SerializerMethodField()
     url = serializers.SerializerMethodField()
+    version = serializers.SerializerMethodField()
 
     class Meta:
         model = Asset
@@ -24,6 +25,7 @@ class AssetSerializer(serializers.ModelSerializer):
             "source",
             "absolute_path",
             "url",
+            "version",
             "created_at",
         ]
 
@@ -34,6 +36,9 @@ class AssetSerializer(serializers.ModelSerializer):
 
     def get_url(self, obj: Asset) -> str:
         return f"/api/v1/assets/{obj.pk}/content"
+
+    def get_version(self, obj: Asset) -> str:
+        return obj.sha256
 
 
 def serialize_asset(asset: Asset) -> dict:

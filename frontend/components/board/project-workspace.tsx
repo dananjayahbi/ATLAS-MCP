@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { usePriorityMatrix, useProject, useProjects, useSetTaskStatus, useTask, useTasks, useTelemetry } from "@/lib/api/queries";
+import { usePriorityMatrix, useArchiveTask, useProject, useProjects, useSetTaskStatus, useTask, useTasks, useTelemetry } from "@/lib/api/queries";
+import { errorMessage } from "@/lib/api/errors";
+import { toast } from "@/hooks/use-toast";
 import type { MatrixXAxis } from "@/lib/api/telemetry";
 import { useBoardFilter } from "@/hooks/use-board-filter";
 import { useBulkTasks } from "@/hooks/use-bulk-tasks";
@@ -25,6 +27,7 @@ import { CreateTaskDialog } from "@/components/tasks/create-task-dialog";
 import { EditTaskDialog } from "@/components/tasks/edit-task-dialog";
 import { TaskBulkBar } from "@/components/tasks/task-bulk-bar";
 import { TaskFilterBar } from "@/components/tasks/task-filter-bar";
+import { DeleteTaskDialog } from "@/components/tasks/delete-task-dialog";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Panel } from "@/components/ui/panel";
@@ -63,6 +66,8 @@ export function ProjectWorkspace({ slug, className }: ProjectWorkspaceProps) {
   const [editTaskId, setEditTaskId] = useState<string | null>(null);
   const [markup, setMarkup] = useState<{ taskId: string; assetId: string } | null>(null);
   const [settingsProject, setSettingsProject] = useState<ProjectDTO | null>(null);
+  const [deleteTask, setDeleteTask] = useState<{ id: string; title: string } | null>(null);
+  const archiveTask = useArchiveTask();
 
   const view = (searchParams.get("view") ?? "board") as View;
   // `unbounded` is only used for the filter bar's agent list and totals, so the
@@ -159,6 +164,17 @@ export function ProjectWorkspace({ slug, className }: ProjectWorkspaceProps) {
       });
   };
 
+  /**
+   * Archive from a card. Archiving is reversible, so it commits immediately and
+   * the toast reports it; the row disappears when the list invalidates.
+   */
+  const archiveRow = (id: string, title: string) => {
+    void archiveTask
+      .mutateAsync({ id, archived: true })
+      .then(() => toast({ level: "warn", title: `Task archived: ${title}` }))
+      .catch((err: unknown) => toast({ level: "error", title: errorMessage(err) }));
+  };
+
   /** Every image on a task, so the markup rail can switch without a refetch. */
   const markupImages: MarkupImageEntry[] = useMemo(() => {
     const entry = markup ? previews.index.get(markup.taskId) : undefined;
@@ -169,6 +185,7 @@ export function ProjectWorkspace({ slug, className }: ProjectWorkspaceProps) {
       url: image.url,
       kind: image.kind,
       mimeType: image.mime_type,
+      version: image.version,
     }));
   }, [markup, previews.index]);
 
@@ -300,6 +317,10 @@ export function ProjectWorkspace({ slug, className }: ProjectWorkspaceProps) {
                           thumbnails={previewFor(task.id)?.images}
                           thumbnailTotal={previewFor(task.id)?.total}
                           onOpenImage={(taskId, assetId) => setMarkup({ taskId, assetId })}
+                          onEdit={setEditTaskId}
+                          onArchive={(id) => archiveRow(id, task.title)}
+                          onDelete={(id) => setDeleteTask({ id, title: task.title })}
+                          busy={archiveTask.isPending && archiveTask.variables?.id === task.id}
                         />
                       </li>
                     ))}
@@ -327,6 +348,15 @@ export function ProjectWorkspace({ slug, className }: ProjectWorkspaceProps) {
                   previewFor={previewFor}
                   onOpenImage={(taskId, assetId) => setMarkup({ taskId, assetId })}
                   onEditTask={(id) => setEditTaskId(id)}
+                  onArchiveTask={(id) => {
+                    const task = ordered.find((row) => row.id === id);
+                    archiveRow(id, task?.title ?? "task");
+                  }}
+                  onDeleteTask={(id) => {
+                    const task = ordered.find((row) => row.id === id);
+                    setDeleteTask({ id, title: task?.title ?? "task" });
+                  }}
+                  busyTaskId={archiveTask.isPending ? (archiveTask.variables?.id ?? null) : null}
                   onMoveTask={moveTask}
                   draggingStatus={dragging}
                 />
@@ -376,6 +406,10 @@ export function ProjectWorkspace({ slug, className }: ProjectWorkspaceProps) {
           task={editingTask}
           onClose={() => setEditTaskId(null)}
           candidates={all}
+          onArchived={() => {
+            setEditTaskId(null);
+            void previews.refetch();
+          }}
           onDeleted={() => {
             setEditTaskId(null);
             setSelection((prev) => {
@@ -384,8 +418,25 @@ export function ProjectWorkspace({ slug, className }: ProjectWorkspaceProps) {
               return next;
             });
           }}
+          onAssetsChanged={() => void previews.refetch()}
         />
       ) : null}
+
+      <DeleteTaskDialog
+        open={deleteTask !== null}
+        taskId={deleteTask?.id ?? ""}
+        taskTitle={deleteTask?.title ?? "task"}
+        onClose={() => setDeleteTask(null)}
+        onDeleted={() => void previews.refetch()}
+        onArchive={
+          deleteTask
+            ? () => {
+                archiveRow(deleteTask.id, deleteTask.title);
+                setDeleteTask(null);
+              }
+            : undefined
+        }
+      />
 
       <MarkupModal
         open={markup !== null}

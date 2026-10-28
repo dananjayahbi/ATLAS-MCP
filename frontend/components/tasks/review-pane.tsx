@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { TaskDetailDTO } from "@/lib/types/api";
+import { assetsApi } from "@/lib/api/assets";
 import { DodList } from "@/components/tasks/dod-list";
 import { PatchViewer } from "@/components/tasks/patch-viewer";
 import { AlertBanner } from "@/components/ui/alert-banner";
@@ -70,13 +71,17 @@ export function ReviewPane({ task }: { task: TaskDetailDTO }) {
               {images.map((asset) => (
                 <li key={asset.id}>
                   <a
-                    href={asset.url}
+                    href={assetsApi.contentUrl(asset.id, asset.version)}
                     target="_blank"
                     rel="noreferrer"
                     className="block rounded-hud border border-grid p-1 hover:border-flow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-flow"
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={asset.url} alt={asset.filename} className="h-40 w-full object-contain" />
+                    <img
+                      src={assetsApi.contentUrl(asset.id, asset.version)}
+                      alt={asset.filename}
+                      className="h-40 w-full object-contain"
+                    />
                     <span className="mt-1 block truncate font-machine text-hud-micro text-muted">{asset.filename}</span>
                   </a>
                 </li>

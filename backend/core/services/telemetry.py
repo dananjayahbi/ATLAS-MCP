@@ -20,16 +20,20 @@ def _age_hours(created_at, now) -> float:
 def priority_matrix(*, project_slug: str | None = None) -> dict:
     """`PriorityMatrixPointDTO[]` (Doc 01 §7.7)."""
     now = utcnow()
-    qs = Task.objects.select_related("project").annotate(
-        blocker_count=Count("blocked_by", distinct=True),
-        child_count=Count("children", distinct=True),
-        unsatisfied_blockers=Count(
-            "blocked_by",
-            filter=~Q(blocked_by__status=TaskStatus.COMPLETED),
-            distinct=True,
-        ),
-        dod_total=Count("checklist", distinct=True),
-        dod_done=Count("checklist", filter=Q(checklist__completed=True), distinct=True),
+    qs = (
+        Task.objects.filter(archived_at__isnull=True)
+        .select_related("project")
+        .annotate(
+            blocker_count=Count("blocked_by", distinct=True),
+            child_count=Count("children", distinct=True),
+            unsatisfied_blockers=Count(
+                "blocked_by",
+                filter=~Q(blocked_by__status=TaskStatus.COMPLETED),
+                distinct=True,
+            ),
+            dod_total=Count("checklist", distinct=True),
+            dod_done=Count("checklist", filter=Q(checklist__completed=True), distinct=True),
+        )
     )
     if project_slug:
         qs = qs.filter(project__slug=project_slug)

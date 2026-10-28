@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { errorMessage } from "@/lib/api/errors";
-import { useDeleteTask, useUpdateTask } from "@/lib/api/queries";
+import { useArchiveTask, useDeleteTask, useUpdateTask } from "@/lib/api/queries";
 import type { TaskUpdateBody } from "@/lib/api/tasks";
 import { toast } from "@/hooks/use-toast";
 import { clampPriority } from "@/lib/format/priority";
@@ -12,13 +12,16 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { TextAreaField, TextField } from "@/components/ui/field";
 import { Kbd } from "@/components/ui/kbd";
+import { TaskAssetsEditor } from "./task-assets-editor";
 
 /**
  * Edit and delete an existing task.
  *
  * Fields map 1:1 onto `PATCH /tasks/{id}/`; status is deliberately absent here
  * because it lives in `StatusMenu` (one implementation per transition,
- * Doc 01 §8). Delete is offered only for tasks the server will actually delete.
+ * Doc 01 §8). The destructive and archival actions are always visible in the
+ * footer — an operator looking for "delete" should not have to find it behind
+ * a hover state.
  */
 
 export type EditTaskDialogProps = {
@@ -27,6 +30,10 @@ export type EditTaskDialogProps = {
   onClose: () => void;
   onSaved?: (task: TaskDetailDTO) => void;
   onDeleted?: (id: string) => void;
+  /** Fires after a successful archive, so the caller can drop the row. */
+  onArchived?: (id: string) => void;
+  /** Fires after an image is added or removed, so thumbnails can resync. */
+  onAssetsChanged?: (id: string) => void;
   /** Tasks selectable as blockers. */
   candidates?: readonly TaskSummaryDTO[];
 };
@@ -34,16 +41,31 @@ export type EditTaskDialogProps = {
 const TITLE_MAX = 200;
 const DESCRIPTION_MAX = 20_000;
 
+/** The server's hard-delete fence (Doc 01 §8 T12), mirrored so the UI can explain it. */
+export function canHardDelete(task: TaskDetailDTO): boolean {
+  if (task.status !== "PENDING" && task.status !== "REJECTED") return false;
+  if (task.attempt_count > 0) return false;
+  return task.assets.length === 0;
+}
+
+/** Archive accepts any task a human may take off the board. */
+export function canArchive(task: TaskDetailDTO): boolean {
+  return task.status === "PENDING" || task.status === "REJECTED";
+}
+
 export function EditTaskDialog({
   open,
   task,
   onClose,
   onSaved,
   onDeleted,
+  onArchived,
+  onAssetsChanged,
   candidates = [],
 }: EditTaskDialogProps) {
   const update = useUpdateTask();
   const remove = useDeleteTask();
+  const archive = useArchiveTask();
 
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
@@ -52,6 +74,7 @@ export function EditTaskDialog({
   const [blockedBy, setBlockedBy] = useState<string[]>(task.blocked_by);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState(false);
 
   // Re-seed when the operator opens the dialog for a different task.
   useEffect(() => {
@@ -63,6 +86,7 @@ export function EditTaskDialog({
     setBlockedBy(task.blocked_by);
     setError(null);
     setConfirmDelete(false);
+    setConfirmArchive(false);
   }, [open, task]);
 
   const dodItems = useMemo(
@@ -71,7 +95,9 @@ export function EditTaskDialog({
   );
 
   const locked = task.status === "COMPLETED";
-  const deletable = (task.status === "PENDING" || task.status === "REJECTED") && task.attempt_count === 0;
+  const deletable = canHardDelete(task);
+  const archivable = canArchive(task);
+  const busy = update.isPending || remove.isPending || archive.isPending;
 
   const dirty =
     title.trim() !== task.title ||
@@ -121,26 +147,61 @@ export function EditTaskDialog({
     }
   };
 
+  const doArchive = async () => {
+    try {
+      await archive.mutateAsync({ id: task.id, archived: true });
+      toast({ level: "warn", title: `Task archived: ${task.title}` });
+      onArchived?.(task.id);
+      onClose();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+
   return (
     <Dialog
       open={open}
       title="Edit task"
       description={`${task.project_slug} · ${task.status.replace("_", " ").toLowerCase()}`}
       onClose={() => {
-        if (update.isPending || remove.isPending) return;
+        if (busy) return;
         onClose();
       }}
-      busy={update.isPending || remove.isPending}
+      busy={busy}
       width="lg"
       footer={
         <>
-          {deletable && !confirmDelete ? (
-            <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(true)} disabled={locked}>
-              Delete…
-            </Button>
-          ) : null}
+          {/*
+            Both destructive actions are always visible: the report was "I still
+            can't find the delete button". They stay disabled — with the reason
+            in the dialog body — when the server would refuse.
+          */}
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setConfirmArchive(true);
+              setConfirmDelete(false);
+            }}
+            disabled={!archivable || busy || confirmArchive}
+            title={archivable ? "Archive this task (reversible)" : "Only PENDING or REJECTED tasks can be archived"}
+          >
+            Archive
+          </Button>
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() => {
+              setConfirmDelete(true);
+              setConfirmArchive(false);
+            }}
+            disabled={busy || confirmDelete}
+            title={deletable ? "Delete permanently" : "Claimed tasks or tasks with attachments must be archived"}
+          >
+            Delete…
+          </Button>
           <span className="min-w-0 flex-1" />
-          <Button size="sm" onClick={onClose} disabled={update.isPending || remove.isPending}>
+          <Button size="sm" onClick={onClose} disabled={busy}>
             Cancel <Kbd size="xs">Esc</Kbd>
           </Button>
           <Button
@@ -148,7 +209,7 @@ export function EditTaskDialog({
             variant="primary"
             onClick={() => void submit()}
             loading={update.isPending}
-            disabled={locked || !dirty || confirmDelete}
+            disabled={locked || !dirty || confirmDelete || confirmArchive}
           >
             Save changes
           </Button>
@@ -164,20 +225,47 @@ export function EditTaskDialog({
           </AlertBanner>
         ) : null}
 
+        {confirmArchive ? (
+          <div className="rounded-hud border border-flow/40 bg-flow-tint p-2">
+            <p className="text-hud-body text-primary">
+              Archive <span className="font-machine">{task.title}</span>?
+            </p>
+            <p className="mt-1 text-hud-micro text-secondary">
+              It leaves the board and every queue, and stays recoverable from the Archive page. Nothing is
+              deleted.
+            </p>
+            <div className="mt-1 flex items-center gap-1">
+              <Button size="sm" onClick={() => setConfirmArchive(false)} disabled={archive.isPending}>
+                Cancel
+              </Button>
+              <Button size="sm" variant="primary" onClick={() => void doArchive()} loading={archive.isPending}>
+                Archive task
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
         {confirmDelete ? (
           <div className="rounded-hud border border-critical/50 bg-critical-tint p-2">
             <p className="text-hud-body text-primary">
               Delete <span className="font-machine">{task.title}</span> permanently?
             </p>
             <p className="mt-1 text-hud-micro text-secondary">
-              Only tasks no agent has claimed can be deleted. The task folder is removed with it; this cannot
-              be undone.
+              {deletable
+                ? "The task folder is removed with the row; this cannot be undone. Archive instead if you may want it back."
+                : "Only tasks no agent has claimed and that carry no attachments can be deleted. Archive this one instead."}
             </p>
             <div className="mt-1 flex items-center gap-1">
               <Button size="sm" onClick={() => setConfirmDelete(false)} disabled={remove.isPending}>
                 Keep it
               </Button>
-              <Button size="sm" variant="danger" onClick={() => void doDelete()} loading={remove.isPending}>
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={() => void doDelete()}
+                loading={remove.isPending}
+                disabled={!deletable}
+              >
                 Delete permanently
               </Button>
             </div>
@@ -237,6 +325,14 @@ export function EditTaskDialog({
           disabled={locked || confirmDelete}
           onChange={(event) => setDod(event.target.value)}
           hint={`${dodItems.length} item(s) · completion is carried across edits by label`}
+        />
+
+        {/* Images live here so add/remove is one surface, not a sidebar round trip. */}
+        <TaskAssetsEditor
+          taskId={task.id}
+          projectSlug={task.project_slug}
+          disabled={locked || confirmDelete || confirmArchive}
+          onChanged={() => onAssetsChanged?.(task.id)}
         />
 
         {candidates.length > 0 ? (

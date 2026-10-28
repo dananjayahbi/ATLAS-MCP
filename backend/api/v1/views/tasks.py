@@ -197,9 +197,21 @@ class TaskForceReleaseView(AtlasAPIView):
 
 
 class TaskArchiveView(AtlasAPIView):
+    """`POST /tasks/{id}/archive/` with `{"archived": false}` to restore."""
+
     def post(self, request, task_id: str):
-        body(request)
-        task = task_service.archive_task(task_id=task_id)
+        payload = body(request)
+        archived = payload.get("archived")
+        if archived is None:
+            archived = True
+        if not isinstance(archived, bool):
+            raise ValidationError("archived must be a boolean.",
+                                  detail={"field": "archived"})
+        task = (
+            task_service.restore_task(task_id=task_id)
+            if not archived
+            else task_service.archive_task(task_id=task_id)
+        )
         return Response(_summary(task))
 
 
@@ -260,7 +272,15 @@ def _flag(raw: str | None) -> bool | None:
 
 
 def _apply_filters(qs, params):
-    """`status` (repeatable or comma-joined), `q`, `agent`, `blocked`, `discovered`, `priority_min`."""
+    """`status`, `q`, `agent`, `blocked`, `discovered`, `priority_min`, `archived`."""
+    # Archived tasks are opt-in: the board, the matrix and the global queue all
+    # read this endpoint, and none of them should show filed-away work.
+    archived = _flag(params.get("archived"))
+    if archived is True:
+        qs = qs.filter(archived_at__isnull=False)
+    elif archived is None or archived is False:
+        qs = qs.filter(archived_at__isnull=True)
+
     raw_status = params.getlist("status") if hasattr(params, "getlist") else []
     raw_status = [part for value in raw_status for part in str(value).split(",") if part]
     if raw_status:

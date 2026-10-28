@@ -196,6 +196,12 @@ export function WorkspaceRail({
       <Button size="sm" className="shrink-0" onClick={onCreateProject}>
         + New project
       </Button>
+      <Link
+        href="/archive"
+        className="shrink-0 rounded-chip px-1 text-left font-machine text-hud-micro uppercase tracking-[0.06em] text-secondary hover:text-flow"
+      >
+        Archived work →
+      </Link>
       <p className="shrink-0 px-0.5 text-hud-micro uppercase tracking-[0.06em] text-disabled">
         Lease TTL {formatDuration(900)} · heartbeat 120s
       </p>

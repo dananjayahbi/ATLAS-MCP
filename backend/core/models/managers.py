@@ -41,6 +41,7 @@ class TaskQuerySet(models.QuerySet):
         )
         return (
             self.filter(status=TaskStatus.PENDING, priority__gte=min_priority)
+            .filter(archived_at__isnull=True)
             .exclude(project__archived_at__isnull=False)
             .annotate(_blocked=Exists(unsatisfied))
             .filter(_blocked=False)

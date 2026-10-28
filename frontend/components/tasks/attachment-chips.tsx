@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { cn } from "@/lib/format/cn";
 import { basename, middlePath } from "@/lib/format/path";
+import { assetsApi } from "@/lib/api/assets";
 import type { AssetKind } from "@/lib/types/enums";
 import type { AssetDTO } from "@/lib/types/enums";
 
@@ -50,7 +51,13 @@ export function AttachmentChips({ assets, onOpenCanvas, className }: AttachmentC
                 <span className="truncate">{label}</span>
               </button>
             ) : (
-              <Link href={asset.url} target="_blank" rel="noreferrer" title={title} className={base}>
+              <Link
+                href={assetsApi.contentUrl(asset.id, asset.version)}
+                target="_blank"
+                rel="noreferrer"
+                title={title}
+                className={base}
+              >
                 <span className="truncate">{label}</span>
                 <span aria-hidden className="shrink-0 text-disabled">
                   ↗

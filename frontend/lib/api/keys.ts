@@ -10,6 +10,8 @@ export type BoardFilter = {
   blocked: boolean | null;
   discovered: boolean | null;
   priorityMin: number | null;
+  /** `true` reads the archive; the board never sets it. */
+  archived: boolean | null;
   sort: "priority" | "created" | "updated" | null;
   order: "asc" | "desc" | null;
   view: "board" | "list" | "matrix";
@@ -31,6 +33,7 @@ export const DEFAULT_BOARD_FILTER: BoardFilter = {
   blocked: null,
   discovered: null,
   priorityMin: null,
+  archived: null,
   sort: "priority",
   order: "desc",
   view: "board",
@@ -41,6 +44,7 @@ export const qk = {
   projects: {
     root: ["projects"] as const,
     list: () => ["projects", "list"] as const,
+    archived: () => ["projects", "archived"] as const,
     detail: (slug: string) => ["projects", "detail", slug] as const,
   },
   tasks: {
@@ -50,6 +54,8 @@ export const qk = {
     detail: (id: string) => ["tasks", "detail", id] as const,
     /** Cross-project queue for the command center (Doc 06 §5.1). */
     global: (fk: string) => ["tasks", "global", fk] as const,
+    /** The archive page's read: archived tasks across every project. */
+    archived: (fk = "") => ["tasks", "archived", fk] as const,
   },
   discoveries: {
     root: ["discoveries"] as const,

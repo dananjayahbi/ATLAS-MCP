@@ -41,6 +41,8 @@ export type TaskSummaryDTO = {
   dependency_weight: number;
   assigned_agent_id: string | null;
   lease_seconds_remaining: number | null;
+  /** Set while the task is filed in the archive; cleared by `restore`. */
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 };

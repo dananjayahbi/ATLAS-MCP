@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { errorMessage } from "@/lib/api/errors";
-import { useArchiveProject, useUpdateProject } from "@/lib/api/queries";
+import { useArchiveProject, usePurgeProject, useUpdateProject } from "@/lib/api/queries";
 import { toast } from "@/hooks/use-toast";
 import type { ProjectDTO } from "@/lib/types/api";
 import { AlertBanner } from "@/components/ui/alert-banner";
@@ -12,12 +12,13 @@ import { TextAreaField, TextField } from "@/components/ui/field";
 import { Kbd } from "@/components/ui/kbd";
 
 /**
- * Edit a project and archive/restore it.
+ * Edit a project and archive/restore or delete it.
  *
  * `slug` is immutable (Doc 01 §6.3) so it renders as read-only text rather than
  * a disabled input — a disabled field reads as "temporarily unavailable".
  * Archiving is reversible (Doc 04 §5.1), which is why it lives here instead of
- * behind a destructive-only confirm.
+ * behind a destructive-only confirm. Permanent delete requires the operator to
+ * retype the slug: it is the one action no undo covers.
  */
 
 const HEX_RE = /^#[0-9A-Fa-f]{6}$/;
@@ -29,11 +30,21 @@ export type EditProjectDialogProps = {
   onClose: () => void;
   onSaved?: (project: ProjectDTO) => void;
   onArchived?: (project: ProjectDTO) => void;
+  /** Fires after a permanent delete, so the caller can drop the row. */
+  onDeleted?: (slug: string) => void;
 };
 
-export function EditProjectDialog({ open, project, onClose, onSaved, onArchived }: EditProjectDialogProps) {
+export function EditProjectDialog({
+  open,
+  project,
+  onClose,
+  onSaved,
+  onArchived,
+  onDeleted,
+}: EditProjectDialogProps) {
   const update = useUpdateProject();
   const archive = useArchiveProject();
+  const purge = usePurgeProject();
 
   const [name, setName] = useState(project.name);
   const [repoPath, setRepoPath] = useState(project.local_repo_path);
@@ -41,6 +52,8 @@ export function EditProjectDialog({ open, project, onClose, onSaved, onArchived 
   const [rules, setRules] = useState(project.global_rules_md);
   const [error, setError] = useState<string | null>(null);
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmSlug, setConfirmSlug] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -50,9 +63,12 @@ export function EditProjectDialog({ open, project, onClose, onSaved, onArchived 
     setRules(project.global_rules_md);
     setError(null);
     setConfirmArchive(false);
+    setConfirmDelete(false);
+    setConfirmSlug("");
   }, [open, project]);
 
   const archived = project.archived_at !== null;
+  const busy = update.isPending || archive.isPending || purge.isPending;
   const dirty =
     name.trim() !== project.name ||
     repoPath.trim() !== project.local_repo_path ||
@@ -99,28 +115,56 @@ export function EditProjectDialog({ open, project, onClose, onSaved, onArchived 
     }
   };
 
+  const doPurge = async () => {
+    try {
+      await purge.mutateAsync({ slug: project.slug });
+      toast({ level: "warn", title: `Project deleted: ${project.name}` });
+      onDeleted?.(project.slug);
+      setConfirmDelete(false);
+      onClose();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+
   return (
     <Dialog
       open={open}
       title="Project settings"
       description={`${project.slug} · slug is immutable`}
       onClose={() => {
-        if (update.isPending || archive.isPending) return;
+        if (busy) return;
         onClose();
       }}
-      busy={update.isPending || archive.isPending}
+      busy={busy}
       footer={
         <>
           <Button
             size="sm"
             variant={archived ? "outline" : "ghost"}
-            onClick={() => setConfirmArchive(true)}
-            disabled={update.isPending || archive.isPending}
+            onClick={() => {
+              setConfirmArchive(true);
+              setConfirmDelete(false);
+            }}
+            disabled={busy || confirmArchive}
+            title={archived ? "Put this project back on the board" : "Hide this project from the board"}
           >
-            {archived ? "Restore project…" : "Archive project…"}
+            {archived ? "Restore" : "Archive"}
+          </Button>
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() => {
+              setConfirmDelete(true);
+              setConfirmArchive(false);
+            }}
+            disabled={busy || confirmDelete}
+            title="Delete this project and its storage permanently"
+          >
+            Delete…
           </Button>
           <span className="min-w-0 flex-1" />
-          <Button size="sm" onClick={onClose} disabled={update.isPending || archive.isPending}>
+          <Button size="sm" onClick={onClose} disabled={busy}>
             Cancel <Kbd size="xs">Esc</Kbd>
           </Button>
           <Button
@@ -128,7 +172,7 @@ export function EditProjectDialog({ open, project, onClose, onSaved, onArchived 
             variant="primary"
             onClick={() => void submit()}
             loading={update.isPending}
-            disabled={!dirty || confirmArchive}
+            disabled={!dirty || confirmArchive || confirmDelete}
           >
             Save changes
           </Button>
@@ -176,6 +220,48 @@ export function EditProjectDialog({ open, project, onClose, onSaved, onArchived 
           </div>
         ) : null}
 
+        {confirmDelete ? (
+          <div className="rounded-hud border border-critical/50 bg-critical-tint p-2">
+            <p className="text-hud-body text-primary">
+              Delete <span className="font-machine">{project.name}</span> permanently?
+            </p>
+            <p className="mt-1 text-hud-micro text-secondary">
+              Every task, asset and the project folder are removed. This cannot be undone — archive instead if
+              you may want the evidence back. Type <span className="font-machine text-primary">{project.slug}</span>{" "}
+              to confirm.
+            </p>
+            <input
+              type="text"
+              value={confirmSlug}
+              onChange={(event) => setConfirmSlug(event.target.value)}
+              aria-label="Type the project slug to confirm deletion"
+              placeholder={project.slug}
+              className="mt-1 w-full rounded-chip border border-grid bg-canvas px-1.5 py-0.5 font-machine text-machine-sm text-primary placeholder:text-disabled focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-flow"
+            />
+            <div className="mt-1 flex items-center gap-1">
+              <Button
+                size="sm"
+                onClick={() => {
+                  setConfirmDelete(false);
+                  setConfirmSlug("");
+                }}
+                disabled={purge.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={() => void doPurge()}
+                loading={purge.isPending}
+                disabled={confirmSlug.trim() !== project.slug}
+              >
+                Delete permanently
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
         <div className="flex items-baseline gap-2 rounded-chip border border-grid bg-inset px-2 py-1">
           <span className="text-hud-micro uppercase tracking-[0.08em] text-secondary">Slug</span>
           <span className="font-machine text-machine-sm text-primary">{project.slug}</span>
@@ -188,7 +274,7 @@ export function EditProjectDialog({ open, project, onClose, onSaved, onArchived 
           required
           value={name}
           maxLength={120}
-          disabled={confirmArchive}
+          disabled={confirmArchive || confirmDelete}
           onChange={(event) => setName(event.target.value)}
           data-autofocus
         />
@@ -197,12 +283,12 @@ export function EditProjectDialog({ open, project, onClose, onSaved, onArchived 
           label="Repository path"
           required
           value={repoPath}
-          disabled={confirmArchive}
+          disabled={confirmArchive || confirmDelete}
           onChange={(event) => setRepoPath(event.target.value)}
           hint="Absolute native path. Not verified to exist."
         />
 
-        <fieldset className="flex flex-col gap-1" disabled={confirmArchive}>
+        <fieldset className="flex flex-col gap-1" disabled={confirmArchive || confirmDelete}>
           <legend className="text-hud-micro uppercase tracking-[0.08em] text-secondary">Accent</legend>
           <div className="flex flex-wrap items-center gap-1">
             {ACCENTS.map((color) => (
@@ -234,7 +320,7 @@ export function EditProjectDialog({ open, project, onClose, onSaved, onArchived 
           label="Global rules (markdown)"
           rows={4}
           value={rules}
-          disabled={confirmArchive}
+          disabled={confirmArchive || confirmDelete}
           onChange={(event) => setRules(event.target.value)}
           hint="Injected into every agent prompt for this project."
         />

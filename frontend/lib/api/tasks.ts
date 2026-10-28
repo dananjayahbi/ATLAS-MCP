@@ -11,6 +11,8 @@ export type TaskListQuery = {
   blocked?: boolean | null;
   discovered?: boolean | null;
   priorityMin?: number | null;
+  /** `true` reads the archive; omitted/false reads the live board. */
+  archived?: boolean | null;
   sort?: "priority" | "created" | "updated" | null;
   order?: "asc" | "desc" | null;
   cursor?: string | null;
@@ -25,6 +27,7 @@ function toParams(query: TaskListQuery): Record<string, string | number | boolea
     blocked: query.blocked,
     discovered: query.discovered,
     priority_min: query.priorityMin,
+    archived: query.archived,
     sort: query.sort,
     order: query.order,
     cursor: query.cursor,
@@ -79,5 +82,7 @@ export const tasksApi = {
     apiPatch<TaskDetailDTO>(`/tasks/${id}/dod/${itemId}/`, { completed }),
   forceRelease: (id: string) => apiPost<TaskSummaryDTO>(`/tasks/${id}/force-release/`),
   requeue: (id: string) => apiPost<TaskSummaryDTO>(`/tasks/${id}/requeue/`),
-  archive: (id: string) => apiPost<TaskSummaryDTO>(`/tasks/${id}/archive/`),
+  /** T12 archive; `archived: false` restores the task to PENDING (T13). */
+  archive: (id: string, archived = true) =>
+    apiPost<TaskSummaryDTO>(`/tasks/${id}/archive/`, { archived }),
 };

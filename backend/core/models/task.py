@@ -57,6 +57,11 @@ class Task(models.Model):
     review_notes = models.TextField(blank=True, default="")
     attempt_count = models.SmallIntegerField(default=0)
 
+    #: Set by `archive_task` and cleared by `requeue_task`. Archived tasks keep
+    #: their `REJECTED` status but leave every board, queue and matrix read, so
+    #: the operator-facing archive is a separate list rather than a status sweep.
+    archived_at = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -72,6 +77,7 @@ class Task(models.Model):
             ),
             models.Index(fields=["status", "lease_expires_at"], name="task_lease_idx"),
             models.Index(fields=["project", "status"], name="task_board_idx"),
+            models.Index(fields=["archived_at"], name="task_archived_idx"),
         ]
         constraints = [
             models.CheckConstraint(

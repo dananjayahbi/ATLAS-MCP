@@ -14,7 +14,12 @@ export type ProjectCreateBody = {
 };
 
 export const projectsApi = {
-  list: (signal?: AbortSignal) => apiGet<ListResponse<ProjectDTO>>("/projects/", { signal }),
+  /** `archived: true` reads the archive list; omitted reads the live projects. */
+  list: (signal?: AbortSignal, options: { archived?: boolean | null } = {}) => {
+    const archived = options.archived;
+    const qs = archived === true ? "?archived=1" : archived === false ? "?archived=0" : "";
+    return apiGet<ListResponse<ProjectDTO>>(`/projects/${qs}`, { signal });
+  },
   get: (slug: string, signal?: AbortSignal) => apiGet<ProjectDTO>(`/projects/${encodeURIComponent(slug)}/`, { signal }),
   create: (body: ProjectCreateBody) => apiPost<ProjectDTO>("/projects/", body),
   update: (slug: string, body: ProjectPatch) =>
@@ -24,4 +29,10 @@ export const projectsApi = {
     apiPost<ProjectDTO>(`/projects/${encodeURIComponent(slug)}/archive/`, { archived }),
   /** Same effect as `archive`, kept because Doc 04 documents the DELETE verb. */
   remove: (slug: string) => apiDelete<ProjectDTO>(`/projects/${encodeURIComponent(slug)}/`),
+  /**
+   * Permanent delete from the archive page. The slug is echoed as `confirm`,
+   * which is what distinguishes a purge from the documented archive DELETE.
+   */
+  purge: (slug: string) =>
+    apiDelete<void>(`/projects/${encodeURIComponent(slug)}/?confirm=${encodeURIComponent(slug)}`),
 };

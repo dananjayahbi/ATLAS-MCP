@@ -75,6 +75,7 @@ export function TaskDetail({ taskId, className }: TaskDetailProps) {
           kind: asset.kind,
           mimeType: asset.mime_type,
           byteSize: asset.byte_size,
+          version: asset.version,
         })),
     [task],
   );

@@ -44,6 +44,22 @@ type Route =
 
 const decode = (value: string | undefined): string => decodeURIComponent(value ?? "");
 
+/** `?archived=` filter, mirroring the API: omitted → active only, `all` → both. */
+type ArchiveFilter = "active" | "archived" | "all";
+
+function archivedOf(raw: string | null): ArchiveFilter {
+  if (raw === null || raw === "") return "active";
+  const value = raw.trim().toLowerCase();
+  if (value === "all") return "all";
+  return value === "1" || value === "true" || value === "yes" ? "archived" : "active";
+}
+
+function matchesArchive(archivedAt: string | null, filter: ArchiveFilter): boolean {
+  // Archived work is opt-in: every working surface reads the default list.
+  if (filter === "all") return true;
+  return filter === "archived" ? archivedAt !== null : archivedAt === null;
+}
+
 function matchRoute(path: string): Route {
   let m: RegExpMatchArray | null;
   if (path === "/projects") return { kind: "projects" };
@@ -79,14 +95,27 @@ export function resolveMockRequest<T>(url: string, method: string, body?: unknow
   const payload = (body ?? {}) as MockBody;
   const verb = method.toUpperCase();
   const route = matchRoute(path);
+  const archivedFilter = archivedOf(parsed.searchParams.get("archived"));
 
   switch (route.kind) {
     case "projects":
-      return listOf(db.projects) as T;
+      return listOf(db.projects.filter((entry) => matchesArchive(entry.archived_at, archivedFilter))) as T;
     case "project": {
       const project = db.projects.find((entry) => entry.slug === route.params[0]);
       if (!project) throw new ApiError("PROJECT_NOT_FOUND", 404, "Project no longer exists");
       if (verb === "PATCH") updateProject(project, payload);
+      if (verb === "DELETE") {
+        // Only an echoed slug is a purge; otherwise DELETE archives, as the API does.
+        const confirmed = parsed.searchParams.get("confirm") === project.slug;
+        if (confirmed) {
+          db.projects = db.projects.filter((entry) => entry.slug !== project.slug);
+          for (const [id, task] of Object.entries(db.tasks)) {
+            if (task.project_slug === project.slug) delete db.tasks[id];
+          }
+          return undefined as T;
+        }
+        project.archived_at = new Date().toISOString();
+      }
       return clone(project) as T;
     }
     case "projectArchive": {
@@ -99,7 +128,11 @@ export function resolveMockRequest<T>(url: string, method: string, body?: unknow
     case "projectTasks": {
       const slug = route.params[0];
       if (verb === "POST") return createTask(slug, payload) as T;
-      return listOf(Object.values(db.tasks).filter((task) => task.project_slug === slug)) as T;
+      return listOf(
+        Object.values(db.tasks).filter(
+          (task) => task.project_slug === slug && matchesArchive(task.archived_at, archivedFilter),
+        ),
+      ) as T;
     }
     case "task": {
       const id = route.params[0];
@@ -129,7 +162,11 @@ export function resolveMockRequest<T>(url: string, method: string, body?: unknow
     case "dod":
       return toggleDodItem(route.params[0], Number(route.params[1]), Boolean(payload?.completed)) as T;
     case "taskAction":
-      return applyTaskAction(route.params[0], route.params[1]) as T;
+      return applyTaskAction(
+        route.params[0],
+        route.params[1],
+        typeof payload?.archived === "boolean" ? payload.archived : null,
+      ) as T;
     case "discoveries":
       return listOf(db.discoveries.filter((discovery) => discovery.status === "PENDING_APPROVAL")) as T;
     case "discoveryAction":

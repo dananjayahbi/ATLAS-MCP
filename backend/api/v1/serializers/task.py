@@ -45,6 +45,7 @@ class TaskSummarySerializer(serializers.ModelSerializer):
             "dependency_weight",
             "assigned_agent_id",
             "lease_seconds_remaining",
+            "archived_at",
             "created_at",
             "updated_at",
         ]
@@ -154,6 +155,7 @@ def serialize_task_summary(task: Task, *, now=None) -> dict:
             if task.status == "IN_PROGRESS"
             else None
         ),
+        "archived_at": iso(task.archived_at),
         "created_at": iso(task.created_at),
         "updated_at": iso(task.updated_at),
     }

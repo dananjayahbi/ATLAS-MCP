@@ -7,14 +7,52 @@ from rest_framework.response import Response
 
 from api.v1.serializers.project import serialize_project
 from api.v1.views.base import AtlasAPIView, body, optional_str, require_field
-from core.errors import ProjectNotFound, ValidationError
+from core.errors import InvalidTransition, ProjectNotFound, ValidationError
 from core.models import Project
-from core.services.projects import archive_project, create_project, restore_project, update_project
+from core.services.projects import (
+    archive_project,
+    create_project,
+    purge_project,
+    restore_project,
+    update_project,
+)
+
+_TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off"}
+
+
+def _archive_flag(raw: str | None) -> bool | None:
+    """`?archived=` tri-state: `True` archived only, `False` active only, `None` both."""
+    if raw is None or raw == "":
+        return None
+    value = raw.strip().lower()
+    if value in _TRUE:
+        return True
+    if value in _FALSE:
+        return False
+    raise ValidationError("archived must be a boolean.", detail={"field": "archived"})
 
 
 class ProjectListView(AtlasAPIView):
+    """`GET/POST /projects/`.
+
+    The board, the rail and the switcher all read this list, so archived
+    projects are hidden by default — otherwise every surface would have to
+    re-filter what the API already knows. `?archived=1` is the archive page's
+    read; `?archived=all` restores the historical "everything" view.
+    """
+
     def get(self, request):
         projects = Project.objects.all().order_by("slug")
+        raw = (request.query_params.get("archived") or "").strip().lower()
+        if raw == "all":
+            pass
+        else:
+            archived = _archive_flag(request.query_params.get("archived"))
+            if archived is True:
+                projects = projects.exclude(archived_at__isnull=True)
+            elif archived is None or archived is False:
+                projects = projects.filter(archived_at__isnull=True)
         return Response(
             {"items": [serialize_project(p) for p in projects], "next_cursor": None}
         )
@@ -57,8 +95,17 @@ class ProjectDetailView(AtlasAPIView):
         return Response(serialize_project(project))
 
     def delete(self, request, slug: str):
-        """Doc 04 §5.1 — archive keeps everything readable, so this is reversible."""
+        """Doc 04 §5.1 — archive keeps everything readable, so this is reversible.
+
+        A request that echoes the slug back (`?confirm=<slug>`) means "purge":
+        the operator has already archived the project and now wants it gone.
+        Without the confirmation this stays the documented archive verb, so an
+        accidental DELETE can never destroy evidence.
+        """
         project = self._get(slug)
+        if (request.query_params.get("confirm") or "").strip() == slug:
+            purge_project(project)
+            return Response(status=204)
         archive_project(project)
         return Response(serialize_project(project))
 

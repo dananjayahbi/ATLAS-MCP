@@ -7,8 +7,10 @@ import { formatPriority } from "@/lib/format/priority";
 import { LEASE_CLASS, leaseTone, STATUS_META } from "@/lib/format/tone";
 import type { AssetPreview } from "@/lib/api/assets";
 import type { TaskSummaryDTO } from "@/lib/types/api";
-import { Badge, PriorityChip, StatusBadge } from "@/components/ui/badge";import { Gauge } from "@/components/ui/gauge";
+import { Badge, PriorityChip, StatusBadge } from "@/components/ui/badge";
+import { Gauge } from "@/components/ui/gauge";
 import { TaskThumbnailGrid } from "@/components/tasks/task-thumbnail-grid";
+import { TaskActionsMenu } from "@/components/tasks/task-actions-menu";
 
 /** Doc 06 §8.1 — one task row/card over `TaskSummaryDTO`. Never re-derives aggregates. */
 
@@ -27,6 +29,14 @@ export type TaskCardProps = {
   onOpenImage?: (taskId: string, assetId: string) => void;
   /** Opens the edit dialog; omitted when the caller has no handler. */
   onEdit?: (id: string) => void;
+  /** Files the task into the archive (T12). Omitted when the caller has none. */
+  onArchive?: (id: string) => void;
+  /** Brings an archived task back to PENDING (T13). */
+  onRestore?: (id: string) => void;
+  /** Opens the delete confirmation; the caller owns the guard feedback. */
+  onDelete?: (id: string) => void;
+  /** Disables the overflow menu while a row mutation is in flight. */
+  busy?: boolean;
   /** Enables HTML5 drag for status moves (board only, never the list view). */
   draggable?: boolean;
 };
@@ -64,6 +74,10 @@ export function TaskCard({
   thumbnailTotal,
   onOpenImage,
   onEdit,
+  onArchive,
+  onRestore,
+  onDelete,
+  busy = false,
   draggable = false,
 }: TaskCardProps) {
   const lease = formatCountdown(task.lease_seconds_remaining);
@@ -94,46 +108,66 @@ export function TaskCard({
       )}
     >
       <div className={cn("flex min-w-0 flex-col gap-1", compact ? "p-1.5" : "p-2")}>
-        <div className="flex min-w-0 items-center gap-1.5">
-          <PriorityChip priority={task.priority} />
-          <StatusBadge status={task.status} />
-          {task.lease_seconds_remaining !== null ? (
-            <span
-              className={cn("ml-auto shrink-0 font-machine text-hud-micro tabular-nums", LEASE_CLASS[leaseTone(task.lease_seconds_remaining)])}
-              title={`Lease ${formatDuration(task.lease_seconds_remaining)} remaining`}
-            >
-              ⏱ {lease}
-            </span>
-          ) : null}
-          {onSelect ? (
-            <button
-              type="button"
-              aria-pressed={selected ?? false}
-              aria-label={`${selected ? "Deselect" : "Select"} ${task.title}`}
-              onClick={() => onSelect(task.id)}
-              className={cn(
-                "grid size-4 shrink-0 place-items-center rounded-chip border text-hud-micro",
-                selected ? "border-flow bg-flow-tint text-flow" : "border-grid text-disabled hover:text-primary",
-              )}
-            >
-              {selected ? "✓" : ""}
-            </button>
-          ) : null}
-          {onEdit ? (
-            <button
-              type="button"
-              aria-label={`Edit ${task.title}`}
-              title="Edit task"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onEdit(task.id);
-              }}
-              className="ml-auto shrink-0 rounded-chip px-1 font-machine text-hud-micro text-disabled opacity-0 transition-opacity duration-100 hover:text-flow focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-flow group-hover:opacity-100"
-            >
-              edit
-            </button>
-          ) : null}
+        {/*
+          Two rows on purpose: a long badge (PENDING APPROVAL, BLOCKED) used to
+          push the edit affordance past the card edge. Badges wrap on their own
+          line while the actions stay pinned to the top-right.
+        */}
+        <div className="flex min-w-0 items-start gap-1.5">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+            <PriorityChip priority={task.priority} />
+            <StatusBadge status={task.status} />
+            {task.archived_at !== null ? <Badge tone="neutral">ARCHIVED</Badge> : null}
+            {task.lease_seconds_remaining !== null ? (
+              <span
+                className={cn(
+                  "shrink-0 font-machine text-hud-micro tabular-nums",
+                  LEASE_CLASS[leaseTone(task.lease_seconds_remaining)],
+                )}
+                title={`Lease ${formatDuration(task.lease_seconds_remaining)} remaining`}
+              >
+                ⏱ {lease}
+              </span>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            {onSelect ? (
+              <button
+                type="button"
+                aria-pressed={selected ?? false}
+                aria-label={`${selected ? "Deselect" : "Select"} ${task.title}`}
+                onClick={() => onSelect(task.id)}
+                className={cn(
+                  "grid size-4 shrink-0 place-items-center rounded-chip border text-hud-micro",
+                  selected ? "border-flow bg-flow-tint text-flow" : "border-grid text-disabled hover:text-primary",
+                )}
+              >
+                {selected ? "✓" : ""}
+              </button>
+            ) : null}
+            {onEdit ? (
+              <button
+                type="button"
+                aria-label={`Edit ${task.title}`}
+                title="Edit task"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onEdit(task.id);
+                }}
+                className="shrink-0 rounded-chip px-1 font-machine text-hud-micro text-disabled opacity-0 transition-opacity duration-100 hover:text-flow focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-flow group-hover:opacity-100"
+              >
+                edit
+              </button>
+            ) : null}
+            <TaskActionsMenu
+              taskTitle={task.title}
+              busy={busy}
+              onArchive={onArchive ? () => onArchive(task.id) : undefined}
+              onRestore={onRestore ? () => onRestore(task.id) : undefined}
+              onDelete={onDelete ? () => onDelete(task.id) : undefined}
+            />
+          </div>
         </div>
 
         <Link
