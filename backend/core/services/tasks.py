@@ -255,6 +255,89 @@ def reject_discovery(*, task_id, note: str = "", actor: str = "human") -> Task:
     return task
 
 
+@transaction.atomic
+def restore_discovery(*, task_id, actor: str = "human") -> Task:
+    """Undo a triage decision: `REJECTED` -> `PENDING_APPROVAL`.
+
+    Triage dispatches immediately (a deferred request the operator could outlive
+    is not a persisted decision), so the undo window needs a real inverse. Only
+    a rejected *discovery* can come back here: a rejected task that was never
+    agent-proposed belongs in `requeue_task`.
+    """
+    task = get_task(task_id)
+    if task.status != TaskStatus.REJECTED:
+        raise InvalidTransition(task.status, "restore_discovery")
+    if not task.is_agent_discovered:
+        raise InvalidTransition(
+            task.status, "restore_discovery", "Only an agent discovery can be restored to triage."
+        )
+
+    now = utcnow()
+    Task.objects.filter(pk=task.pk, status=TaskStatus.REJECTED).update(
+        status=TaskStatus.PENDING_APPROVAL, review_notes="", archived_at=None, updated_at=now
+    )
+    task.refresh_from_db()
+    audit(project=task.project, event=AuditEvent.TASK_STATUS, task_id=task.pk,
+          actor=actor, detail={"to": TaskStatus.PENDING_APPROVAL, "action": "restore_discovery"})
+    emit(project=task.project, task=task, type=EventType.DISCOVERY_CREATED,
+         message=f"Discovery restored to triage: {task.title}")
+    return task
+
+
+@transaction.atomic
+def update_discovery(
+    *,
+    task_id,
+    title: str | None = None,
+    description: str | None = None,
+    priority: int | None = None,
+    dod_items: Iterable[str] | None = None,
+    discovery_reason: str | None = None,
+    actor: str = "human",
+) -> Task:
+    """`PATCH /discoveries/{id}/` — correct the proposal before approving it.
+
+    Approving invests the agent's text as the task brief, so the operator has to
+    be able to fix the whole context, not just the priority. Constraints are the
+    ones that make a discovery a discovery: it is still awaiting triage.
+    """
+    task = get_task(task_id)
+    if task.status != TaskStatus.PENDING_APPROVAL:
+        raise InvalidTransition(task.status, "update_discovery")
+
+    changes: dict[str, Any] = {}
+    if title is not None:
+        _assert_text(title, "title", 200)
+        changes["title"] = title.strip()
+    if description is not None:
+        _assert_text(description, "description", 20_000)
+        changes["description"] = description
+    if priority is not None:
+        _assert_priority(priority)
+        changes["priority"] = priority
+    if discovery_reason is not None:
+        if not isinstance(discovery_reason, str):
+            raise ValidationError(
+                "discovery_reason must be a string.", detail={"field": "discovery_reason"}
+            )
+        changes["discovery_reason"] = discovery_reason[:2_000]
+
+    if changes:
+        changes["updated_at"] = utcnow()
+        Task.objects.filter(pk=task.pk).update(**changes)
+        task.refresh_from_db()
+
+    if dod_items is not None:
+        _replace_checklist(task, dod_items)
+
+    if changes or dod_items is not None:
+        audit(project=task.project, event=AuditEvent.TASK_STATUS, task_id=task.pk,
+              actor=actor, detail={"edited": sorted(changes) or ["definition_of_done"]})
+        emit(project=task.project, task=task, type=EventType.TASK_UPDATED,
+             message=f"Discovery updated: {task.title}")
+    return task
+
+
 # ---------------------------------------------------------------------------
 # T7 — submit_for_review
 # ---------------------------------------------------------------------------
@@ -522,6 +605,10 @@ def set_status(*, task_id, to: str, note: str = "", actor: str = "human") -> Tas
 
     # T12 / T13 / T11 — the reversible human moves.
     if to == TaskStatus.REJECTED:
+        # `COMPLETED` is no longer a dead end: an operator can file finished work
+        # away after the fact, exactly like any other row.
+        if current == TaskStatus.COMPLETED:
+            return _move_from_completed(task, TaskStatus.REJECTED, note=note, actor=actor)
         return archive_task(task_id=task.pk, actor=actor)
     if to == TaskStatus.PENDING and current == TaskStatus.REJECTED:
         return requeue_task(task_id=task.pk, actor=actor)
@@ -532,6 +619,11 @@ def set_status(*, task_id, to: str, note: str = "", actor: str = "human") -> Tas
         return approve_review(task_id=task.pk, note=note, actor=actor)
     if to == TaskStatus.PENDING and current == TaskStatus.IN_REVIEW:
         return reject_review(task_id=task.pk, note=note or "Reopened by operator.", actor=actor)
+    # Reopening finished work: an accidental completion, or code reverted by hand
+    # in the IDE and queued for another run. `IN_PROGRESS` is deliberately absent
+    # from every `COMPLETED` move — only an agent may claim work.
+    if current == TaskStatus.COMPLETED and to in (TaskStatus.PENDING, TaskStatus.IN_REVIEW):
+        return _move_from_completed(task, to, note=note, actor=actor)
     # T5 / T14 — an operator may hand a queued task to an agent.
     if to == TaskStatus.IN_PROGRESS and current == TaskStatus.PENDING:
         agent = task.assigned_agent_id or _default_agent_identifier()
@@ -539,6 +631,48 @@ def set_status(*, task_id, to: str, note: str = "", actor: str = "human") -> Tas
         return get_task(task.pk)
 
     raise InvalidTransition(current, f"set_status:{to}")
+
+
+@transaction.atomic
+def _move_from_completed(
+    task: Task, to: str, *, note: str = "", actor: str = "human"
+) -> Task:
+    """Reopen completed work without erasing the audit trail.
+
+    `approve_review` stamps the completion; leaving `submitted_at`/leases intact
+    keeps the evidence that the review happened, while `review_notes` records why
+    the row came back. `archived_at` is only touched on `REJECTED`, because that
+    is the status the archive surface reads.
+    """
+    now = utcnow()
+    changes: dict[str, Any] = {
+        "status": to,
+        "review_notes": note,
+        "updated_at": now,
+        "completed_at": None,
+    }
+    if to == TaskStatus.PENDING:
+        # A reopened task must be claimable again, so the agent lease is dropped.
+        # `claimable()` also filters `archived_at__isnull`, so any archive stamp
+        # has to go or the row would be invisible to the queue it just joined.
+        changes["assigned_agent_id"] = None
+        changes["claimed_at"] = None
+        changes["lease_id"] = None
+        changes["lease_expires_at"] = None
+        changes["submitted_at"] = None
+        changes["archived_at"] = None
+    elif to == TaskStatus.IN_REVIEW:
+        changes["archived_at"] = None
+    # REJECTED keeps whatever archive stamp it had: rejecting finished work puts
+    # it back in the live Rejected column, and filing it away is a separate,
+    # deliberate archive action (T12).
+    Task.objects.filter(pk=task.pk, status=TaskStatus.COMPLETED).update(**changes)
+    task.refresh_from_db()
+    audit(project=task.project, event=AuditEvent.TASK_STATUS, task_id=task.pk,
+          actor=actor, detail={"from": TaskStatus.COMPLETED, "to": to, "note": note})
+    emit(project=task.project, task=task, type=EventType.TASK_STATUS_CHANGED,
+         message=f"{TaskStatus.COMPLETED} -> {to} (reopened)")
+    return task
 
 
 @transaction.atomic
@@ -766,21 +900,35 @@ def _create_checklist(task: Task, items: Iterable[str] | None) -> None:
 
 
 def _ingest_screenshots(task: Task, paths: Iterable[str] | None) -> None:
+    """Attach agent-supplied evidence to a proposal.
+
+    Parity with a hand-made task is the point: a manual upload lands in `input/`
+    as `INPUT_SCREENSHOT`, so an agent screenshot must land in exactly the same
+    place with the same kind, or the two look different in every image surface.
+    """
     from core.enums import AssetKind, AssetSource
     from core.services.assets import register_stored_file
 
     for raw in list(paths or [])[:20]:
         try:
             stored = router.copy_into_task(
-                task.project_id, task.pk, source_path=raw, subdir="output"
+                task.project_id, task.pk, source_path=raw, subdir="input"
             )
         except Exception as exc:  # containment/IO failure must not lose the task
             logger.warning("screenshot ingest failed for %s: %s", raw, exc)
             continue
         register_stored_file(
-            task=task, stored=stored, kind=AssetKind.VERIFICATION_IMAGE,
-            mime_type="image/png", source=AssetSource.AGENT,
+            task=task, stored=stored, kind=AssetKind.INPUT_SCREENSHOT,
+            mime_type=_guess_image_mime(stored.filename), source=AssetSource.AGENT,
         )
+
+
+def _guess_image_mime(filename: str) -> str:
+    """Agent screenshots are not always PNG; a wrong MIME hides them from previews."""
+    import mimetypes
+
+    mime, _ = mimetypes.guess_type(filename)
+    return mime if mime and mime.startswith("image/") else "image/png"
 
 
 def _store_output(task: Task, filename: str, payload: bytes, *, kind: str, mime: str) -> Asset:

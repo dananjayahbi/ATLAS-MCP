@@ -21,7 +21,8 @@ export type DiscoveryInboxProps = {
   loading?: boolean;
   onApprove: (discovery: DiscoveryDTO, priority: number) => Promise<unknown>;
   onReject: (discovery: DiscoveryDTO) => Promise<unknown>;
-  onEditPriority?: (discovery: DiscoveryDTO) => void;
+  onRestore: (taskId: string) => Promise<unknown>;
+  onEdit?: (discovery: DiscoveryDTO) => void;
   className?: string;
 };
 
@@ -30,7 +31,8 @@ export function DiscoveryInbox({
   loading = false,
   onApprove,
   onReject,
-  onEditPriority,
+  onRestore,
+  onEdit,
   className,
 }: DiscoveryInboxProps) {
   const [activeIndex, setActiveIndex] = useState(0);
@@ -40,12 +42,16 @@ export function DiscoveryInbox({
   const { shelf, removed, now, schedule, undo } = useTriageShelf({
     onApprove,
     onReject,
+    onRestore,
     onError: setError,
     onDispatched: (discovery, kind) =>
       toast({
         level: "info",
         title: kind === "approve" ? "Discovery approved" : "Discovery dismissed",
-        body: kind === "approve" ? `${discovery.title} — open the task to edit priority.` : undefined,
+        body:
+          kind === "approve"
+            ? `${discovery.title} — the task is now in the queue.`
+            : `${discovery.title} — press U to undo.`,
       }),
   });
 
@@ -68,7 +74,7 @@ export function DiscoveryInbox({
     onApprove: () => active && schedule(active, "approve", active.priority),
     onReject: () => active && schedule(active, "reject", active.priority),
     extra: [
-      { key: "e", scopes: ["global"], run: () => active && onEditPriority?.(active) },
+      { key: "e", scopes: ["global"], run: () => active && onEdit?.(active) },
       { key: "Delete", scopes: ["global"], run: () => active && schedule(active, "reject", active.priority) },
       { key: "Backspace", scopes: ["global"], run: () => active && schedule(active, "reject", active.priority) },
       {
@@ -125,7 +131,7 @@ export function DiscoveryInbox({
               onFocus={() => setActiveIndex(index)}
               onApprove={() => schedule(discovery, "approve", discovery.priority)}
               onDismiss={() => schedule(discovery, "reject", discovery.priority)}
-              onEdit={() => onEditPriority?.(discovery)}
+              onEdit={() => onEdit?.(discovery)}
               onExpand={() => setExpandedId((current) => (current === discovery.task_id ? null : discovery.task_id))}
             />
           </div>

@@ -91,6 +91,8 @@ export type DiscoveryDTO = {
   discovery_reason: string;
   assets: AssetDTO[];
   screenshot_absolute_paths: string[];
+  /** Present so the triage editor can reword the agent's checklist pre-approval. */
+  definition_of_done: ChecklistItemDTO[];
   created_at: string;
 };
 

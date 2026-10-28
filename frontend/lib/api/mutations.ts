@@ -3,7 +3,7 @@
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 import type { DiscoveryDTO, ListResponse, ProjectDTO, TaskDetailDTO, TaskSummaryDTO } from "@/lib/types/api";
 import type { ApiError } from "./client";
-import { discoveriesApi } from "./discoveries";
+import { discoveriesApi, type DiscoveryUpdateBody } from "./discoveries";
 import { qk } from "./keys";
 import { projectsApi, type ProjectCreateBody, type ProjectPatch } from "./projects";
 import { reviewsApi } from "./reviews";
@@ -126,18 +126,18 @@ export function useRejectReview(): UseMutationResult<TaskSummaryDTO, ApiError, {
 }
 
 export function useApproveDiscovery(): UseMutationResult<
-  TaskSummaryDTO,
+  DiscoveryDTO,
   ApiError,
   { id: string; priority: number },
   { previousIds?: string[] }
 > {
   const queryClient = useQueryClient();
-  return useMutation<TaskSummaryDTO, ApiError, { id: string; priority: number }, { previousIds?: string[] }>({
+  return useMutation<DiscoveryDTO, ApiError, { id: string; priority: number }, { previousIds?: string[] }>({
     mutationFn: ({ id, priority }) => discoveriesApi.approve(id, { priority }),
     onMutate: async ({ id }) => {
       await queryClient.cancelQueries({ queryKey: qk.discoveries.root });
-      // 5 s dispatch delay means the row is already gone from the list; drop it
-      // from the cached page too so an invalidate cannot resurrect it.
+      // The row leaves triage for good on approve; drop it from the cached page
+      // too so an invalidate cannot resurrect it while the refetch is in flight.
       queryClient.setQueriesData<ListResponse<DiscoveryDTO>>({ queryKey: qk.discoveries.root }, (previous) =>
         previous ? { ...previous, items: previous.items.filter((row) => row.task_id !== id) } : previous,
       );
@@ -152,13 +152,10 @@ export function useApproveDiscovery(): UseMutationResult<
   });
 }
 
-export function useRejectDiscovery(): UseMutationResult<TaskSummaryDTO | null, ApiError, { id: string }> {
+export function useRejectDiscovery(): UseMutationResult<DiscoveryDTO, ApiError, { id: string }> {
   const queryClient = useQueryClient();
-  return useMutation<TaskSummaryDTO | null, ApiError, { id: string }>({
-    mutationFn: async ({ id }) => {
-      await discoveriesApi.reject(id, { reason: null });
-      return null;
-    },
+  return useMutation<DiscoveryDTO, ApiError, { id: string }>({
+    mutationFn: ({ id }) => discoveriesApi.reject(id, { reason: null }),
     onMutate: async ({ id }) => {
       await queryClient.cancelQueries({ queryKey: qk.discoveries.root });
       queryClient.setQueriesData<ListResponse<DiscoveryDTO>>({ queryKey: qk.discoveries.root }, (previous) =>
@@ -168,7 +165,51 @@ export function useRejectDiscovery(): UseMutationResult<TaskSummaryDTO | null, A
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: qk.discoveries.root });
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.root });
+      void queryClient.invalidateQueries({ queryKey: qk.projects.root });
       void queryClient.invalidateQueries({ queryKey: qk.telemetry.summary() });
+    },
+  });
+}
+
+/** Undo a dismissal: the server moves the row back to PENDING_APPROVAL. */
+export function useRestoreDiscovery(): UseMutationResult<DiscoveryDTO, ApiError, { id: string }> {
+  const queryClient = useQueryClient();
+  return useMutation<DiscoveryDTO, ApiError, { id: string }>({
+    mutationFn: ({ id }) => discoveriesApi.restore(id),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.discoveries.root });
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.root });
+      void queryClient.invalidateQueries({ queryKey: qk.projects.root });
+      void queryClient.invalidateQueries({ queryKey: qk.telemetry.summary() });
+    },
+  });
+}
+
+/**
+ * Full-context correction of a pending proposal.
+ *
+ * Not optimistic: the response is the authoritative post-edit `DiscoveryDTO`,
+ * and a rejected field (e.g. a title over the 200-char cap) must surface as an
+ * error rather than a silently reverted input.
+ */
+export function useUpdateDiscovery(): UseMutationResult<
+  DiscoveryDTO,
+  ApiError,
+  { id: string; body: DiscoveryUpdateBody }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<DiscoveryDTO, ApiError, { id: string; body: DiscoveryUpdateBody }>({
+    mutationFn: ({ id, body }) => discoveriesApi.update(id, body),
+    onSuccess: (data) => {
+      queryClient.setQueriesData<ListResponse<DiscoveryDTO>>({ queryKey: qk.discoveries.root }, (previous) =>
+        previous
+          ? { ...previous, items: previous.items.map((row) => (row.task_id === data.task_id ? data : row)) }
+          : previous,
+      );
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.discoveries.root });
     },
   });
 }

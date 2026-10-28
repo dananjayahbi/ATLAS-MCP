@@ -5,6 +5,7 @@ from __future__ import annotations
 from rest_framework import serializers
 
 from api.v1.serializers.asset import serialize_asset
+from api.v1.serializers.checklist import serialize_checklist
 from api.v1.serializers.computed import iso
 from core.models import Task
 
@@ -73,5 +74,8 @@ def serialize_discovery(task: Task) -> dict:
             for a in assets
             if a.kind in {"INPUT_SCREENSHOT", "VERIFICATION_IMAGE", "ANNOTATED_CANVAS"}
         ],
+        # Same shape as `TaskDetailDTO.definition_of_done`, so the triage editor
+        # reuses `ChecklistItemDTO` instead of inventing a second checklist shape.
+        "definition_of_done": [serialize_checklist(i) for i in task.checklist.all()],
         "created_at": iso(task.created_at),
     }

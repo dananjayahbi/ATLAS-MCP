@@ -46,6 +46,11 @@ urlpatterns = [
     # Discoveries
     path("discoveries/", discoveries.DiscoveryListView.as_view(), name="discovery-list"),
     path(
+        "discoveries/<uuid:task_id>/",
+        discoveries.DiscoveryDetailView.as_view(),
+        name="discovery-detail",
+    ),
+    path(
         "discoveries/<uuid:task_id>/approve/",
         discoveries.DiscoveryApproveView.as_view(),
         name="discovery-approve",
@@ -54,6 +59,11 @@ urlpatterns = [
         "discoveries/<uuid:task_id>/reject/",
         discoveries.DiscoveryRejectView.as_view(),
         name="discovery-reject",
+    ),
+    path(
+        "discoveries/<uuid:task_id>/restore/",
+        discoveries.DiscoveryRestoreView.as_view(),
+        name="discovery-restore",
     ),
     # Reviews
     path("reviews/", reviews.ReviewListView.as_view(), name="review-list"),

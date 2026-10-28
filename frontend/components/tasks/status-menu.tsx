@@ -16,7 +16,10 @@ export const MANUAL_TRANSITIONS: Record<TaskStatus, readonly TaskStatus[]> = {
   PENDING: ["IN_PROGRESS", "REJECTED"],
   IN_PROGRESS: ["PENDING", "IN_REVIEW"],
   IN_REVIEW: ["COMPLETED", "PENDING"],
-  COMPLETED: [],
+  // Reopenable: completion can be a misclick, and code reverted by hand in the
+  // IDE has to go back in the queue. `IN_PROGRESS` is absent on purpose — only
+  // an agent may claim work (a lease transition, not a dropdown choice).
+  COMPLETED: ["REJECTED", "PENDING", "IN_REVIEW"],
   REJECTED: ["PENDING"],
 };
 
