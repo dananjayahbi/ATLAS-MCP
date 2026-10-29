@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from django.urls import path
 
-from api.v1.views import assets, discoveries, projects, reviews, tasks, telemetry
+from api.v1.views import assets, claim_limits, discoveries, projects, reviews, tasks, telemetry
 
 urlpatterns = [
     # Projects
@@ -44,8 +44,7 @@ urlpatterns = [
     ),
     path("tasks/<uuid:task_id>/events/", tasks.TaskHistoryView.as_view(), name="task-events"),
     # Discoveries
-    path("discoveries/", discoveries.DiscoveryListView.as_view(), name="discovery-list"),
-    path(
+    path("discoveries/", discoveries.DiscoveryListView.as_view(), name="discovery-list"),    path(
         "discoveries/<uuid:task_id>/",
         discoveries.DiscoveryDetailView.as_view(),
         name="discovery-detail",
@@ -77,6 +76,17 @@ urlpatterns = [
         reviews.ReviewRejectView.as_view(),
         name="review-reject",
     ),
+    # Claim-limit requests (operator-only resolution; agents can only ask)
+    path(
+        "claim-limit-requests/",
+        claim_limits.ClaimLimitRequestListView.as_view(),
+        name="claim-limit-request-list",
+    ),
+    path(
+        "claim-limit-requests/<uuid:request_id>/resolve/",
+        claim_limits.ClaimLimitRequestResolveView.as_view(),
+        name="claim-limit-request-resolve",
+    ),
     # Assets
     path("assets/", assets.AssetUploadView.as_view(), name="asset-upload"),
     path(
@@ -94,6 +104,11 @@ urlpatterns = [
         "assets/<uuid:asset_id>/content",
         assets.AssetContentView.as_view(),
         name="asset-content",
+    ),
+    path(
+        "assets/<uuid:asset_id>/thumbnail",
+        assets.AssetThumbnailView.as_view(),
+        name="asset-thumbnail",
     ),
     path(
         "assets/<uuid:asset_id>/download",

@@ -36,6 +36,7 @@ type Route =
   | { kind: "taskAction"; params: [string, string] }
   | { kind: "discoveries" }
   | { kind: "discoveryAction"; params: [string, string] }
+  | { kind: "claimLimits" }
   | { kind: "reviews" }
   | { kind: "reviewAction"; params: [string, string] }
   | { kind: "telemetry" }
@@ -80,6 +81,7 @@ function matchRoute(path: string): Route {
   if ((m = path.match(/^\/discoveries\/([^/]+)\/(approve|reject)$/))) {
     return { kind: "discoveryAction", params: [decode(m[1]), m[2]] };
   }
+  if (/^\/claim-limit-requests\/?$/.test(path)) return { kind: "claimLimits" };
   if (path === "/reviews") return { kind: "reviews" };
   if ((m = path.match(/^\/reviews\/([^/]+)\/(approve|reject)$/))) {
     return { kind: "reviewAction", params: [decode(m[1]), m[2]] };
@@ -171,6 +173,8 @@ export function resolveMockRequest<T>(url: string, method: string, body?: unknow
       return listOf(db.discoveries.filter((discovery) => discovery.status === "PENDING_APPROVAL")) as T;
     case "discoveryAction":
       return resolveDiscovery(route.params[0], route.params[1], payload) as T;
+    case "claimLimits":
+      return listOf([]) as T;
     case "reviews":
       return listOf(db.reviews) as T;
     case "reviewAction":

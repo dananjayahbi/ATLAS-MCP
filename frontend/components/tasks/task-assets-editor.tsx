@@ -10,6 +10,7 @@ import { useDeleteAsset } from "@/lib/api/queries";
 import { useAttachmentUpload } from "@/hooks/use-attachment-upload";
 import { toast } from "@/hooks/use-toast";
 import { formatBytes } from "@/lib/format/bytes";
+import { assetImageUrl } from "@/lib/format/asset-image";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -119,7 +120,7 @@ export function TaskAssetsEditor({ taskId, projectSlug, disabled = false, onChan
               >
                 {/* eslint-disable-next-line @next/next/no-img-element -- same-origin API route */}
                 <img
-                  src={assetsApi.contentUrl(image.id, image.version)}
+                  src={assetImageUrl(image)}
                   alt={image.filename}
                   loading="lazy"
                   className="h-20 w-full object-cover"

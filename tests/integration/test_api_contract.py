@@ -233,14 +233,10 @@ def test_discovery_approve_flow(client, project, task):
 
 def test_review_approve_accepts_no_body(client, project, task):
     from core import leases
-    from core.services import tasks as svc
+    from tests.conftest import drive_to_review
 
-    claimed = leases.claim_next_task(project_slug="alpha", agent_identifier="Agent-X")
-    svc.submit_for_review(
-        task_id=task.pk,
-        summary_of_work="done",
-        git_patch="--- a\n+++ b\n@@\n-x\n+y\n",
-    )
+    leases.claim_next_task(project_slug="alpha", agent_identifier="Agent-X")
+    drive_to_review(task, agent="Agent-X")
     response = client.post(f"/api/v1/reviews/{task.pk}/approve/", **AUTH)
     assert response.status_code == 200, response.content
     assert response.json()["status"] == "COMPLETED"

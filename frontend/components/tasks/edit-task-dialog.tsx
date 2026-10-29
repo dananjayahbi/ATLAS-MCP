@@ -48,9 +48,9 @@ export function canHardDelete(task: TaskDetailDTO): boolean {
   return task.assets.length === 0;
 }
 
-/** Archive accepts any task a human may take off the board. */
-export function canArchive(task: TaskDetailDTO): boolean {
-  return task.status === "PENDING" || task.status === "REJECTED";
+/** Tasks can be archived from any status. */
+export function canArchive(_task: TaskDetailDTO): boolean {
+  return true;
 }
 
 export function EditTaskDialog({
@@ -184,7 +184,7 @@ export function EditTaskDialog({
               setConfirmDelete(false);
             }}
             disabled={!archivable || busy || confirmArchive}
-            title={archivable ? "Archive this task (reversible)" : "Only PENDING or REJECTED tasks can be archived"}
+            title="Archive this task (reversible)"
           >
             Archive
           </Button>

@@ -341,6 +341,69 @@ def update_discovery(
 # ---------------------------------------------------------------------------
 # T7 — submit_for_review
 # ---------------------------------------------------------------------------
+#: How far back `submit_for_review` looks for the agent's own progress evidence.
+SUBMIT_EVIDENCE_WINDOW_MINUTES = 24 * 60
+
+
+def _progress_evidence(task: Task) -> int:
+    """Count `task.log` events recorded while the task was being worked on.
+
+    `log_task_progress` is the only channel that leaves a trace of what the agent
+    actually did, so "did you report progress?" is answered from the event log
+    rather than from a column the agent could set without doing the work.
+
+    Deliberately not filtered by agent identity: a task can legitimately be
+    resumed under a different agent id after a lease reclaim, and the question is
+    whether *anything* was reported, not who said it.
+    """
+    from datetime import timedelta as _timedelta
+
+    from core.enums import EventType as _EventType
+    from core.models import TaskEvent as _TaskEvent
+
+    cutoff = utcnow() - _timedelta(minutes=SUBMIT_EVIDENCE_WINDOW_MINUTES)
+    return _TaskEvent.objects.filter(
+        task=task,
+        type=_EventType.TASK_LOG,
+        created_at__gte=cutoff,
+    ).count()
+
+
+def _assert_review_ready(task: Task) -> None:
+    """Both IN_REVIEW preconditions, in the order an agent can act on them.
+
+    1. **Progress reported** — a task cannot be flipped to review without the
+       operator ever hearing from the agent. At least one `log_task_progress`
+       line proves the agent worked the task rather than closing it blind.
+    2. **DoD complete** — an incomplete checklist means the acceptance contract
+       is unmet; `IN_REVIEW` is a "please verify my finished work" signal and
+       must not be sendable while visible work remains.
+    """
+    from core.errors import ReviewPreconditionFailed
+
+    if _progress_evidence(task) == 0:
+        raise ReviewPreconditionFailed(
+            "submit_for_review requires at least one log_task_progress entry for this task.",
+            detail={
+                "field": "progress",
+                "field_detail": "call log_task_progress before submitting",
+                "task_id": str(task.pk),
+            },
+        )
+
+    percent = task.dod_progress_percent
+    if percent < 100:
+        raise ReviewPreconditionFailed(
+            f"Definition of done is {percent}% complete; every item must be ticked before review.",
+            detail={
+                "field": "definition_of_done",
+                "dod_progress_percent": percent,
+                "required_percent": 100,
+                "task_id": str(task.pk),
+            },
+        )
+
+
 @transaction.atomic
 def submit_for_review(
     *,
@@ -363,6 +426,11 @@ def submit_for_review(
 
     if task.status == TaskStatus.IN_PROGRESS:
         _assert_live_lease(task, "submit_for_review")
+
+    # Enforced on every submit (including a re-submit of an already-IN_REVIEW
+    # task): a reviewer rejection can untick DoD items, and the agent must
+    # re-complete them before asking for review again.
+    _assert_review_ready(task)
 
     project = task.project
     patch = git_patch.encode("utf-8")
@@ -449,25 +517,46 @@ def archive_task(*, task_id, actor: str = "human") -> Task:
     Archive is expressed as `REJECTED` + `archived_at`, so the reviewer's
     rejected-but-live work (which the operator can requeue) stays distinct from
     work the operator deliberately filed away.
+
+    Any status may be archived. Filing work away is an operator decision about
+    visibility, not a state-machine concession: parking an in-progress or
+    completed row is exactly what the board's bulk bar is for. Archiving is
+    therefore also a lease release — a filed-away task must not keep holding a
+    claim slot the agent could have used.
     """
     task = get_task(task_id)
-    if task.status not in (TaskStatus.PENDING, TaskStatus.REJECTED):
-        raise InvalidTransition(task.status, "archive_task")
+    previous = task.status
 
     now = utcnow()
     Task.objects.filter(pk=task.pk).update(
-        status=TaskStatus.REJECTED, archived_at=now, updated_at=now
+        status=TaskStatus.REJECTED,
+        archived_at=now,
+        # Drop any live claim so the row stops counting toward the project's
+        # concurrent-claim ceiling and no agent believes it still owns it.
+        lease_id=None,
+        lease_expires_at=None,
+        last_heartbeat_at=None,
+        updated_at=now,
     )
     task.refresh_from_db()
     audit(project=task.project, event=AuditEvent.TASK_STATUS, task_id=task.pk,
-          actor=actor, detail={"to": TaskStatus.REJECTED, "archived": True})
+          actor=actor, detail={"to": TaskStatus.REJECTED, "archived": True,
+                               "from": previous})
     emit(project=task.project, task=task, type=EventType.TASK_STATUS_CHANGED,
-         message=f"{TaskStatus.PENDING} -> {TaskStatus.REJECTED} (archived)")
+         message=f"{previous} -> {TaskStatus.REJECTED} (archived)")
     return task
 
 
 @transaction.atomic
-def requeue_task(*, task_id, actor: str = "human") -> Task:
+def requeue_task(*, task_id, actor: str = "human", reset_progress: bool = False) -> Task:
+    """`REJECTED` -> `PENDING`. Restoration additionally clears DoD progress.
+
+    `reset_progress` is what separates "the reviewer sent this back for rework"
+    (keep the ticks — the agent only has to fix the review notes) from "put this
+    filed-away task back in the queue" (the work is unverified again, so it must
+    start from nothing rather than inheriting a 100% that would let it jump
+    straight back into review).
+    """
     task = get_task(task_id)
     if task.status != TaskStatus.REJECTED:
         raise InvalidTransition(task.status, "requeue_task")
@@ -477,11 +566,17 @@ def requeue_task(*, task_id, actor: str = "human") -> Task:
     Task.objects.filter(pk=task.pk, status=TaskStatus.REJECTED).update(
         status=TaskStatus.PENDING, review_notes="", archived_at=None, updated_at=now
     )
+    if reset_progress:
+        task.checklist.filter(completed=True).update(
+            completed=False, completed_at=None, completed_by_agent=None
+        )
     task.refresh_from_db()
     audit(project=task.project, event=AuditEvent.TASK_STATUS, task_id=task.pk,
-          actor=actor, detail={"to": TaskStatus.PENDING, "action": "requeue"})
+          actor=actor, detail={"to": TaskStatus.PENDING, "action": "requeue",
+                               "progress_reset": reset_progress})
     emit(project=task.project, task=task, type=EventType.TASK_STATUS_CHANGED,
-         message=f"{TaskStatus.REJECTED} -> {TaskStatus.PENDING} (requeued)")
+         message=f"{TaskStatus.REJECTED} -> {TaskStatus.PENDING} (requeued)",
+         payload={"progress_reset": reset_progress})
     return task
 
 
@@ -707,12 +802,14 @@ def restore_task(*, task_id, actor: str = "human") -> Task:
     """Un-archive: clear `archived_at` and put the task back in the queue (T13).
 
     Archive is expressed as `REJECTED + archived_at`, so restoring is exactly the
-    requeue transition plus clearing the archive stamp.
+    requeue transition plus clearing the archive stamp — and, because the work
+    was filed away unverified, clearing the DoD ticks so the restored task
+    re-enters the queue as fresh work at 0% progress.
     """
     task = get_task(task_id)
     if task.archived_at is None:
         raise InvalidTransition(task.status, "restore_task", "Task is not archived.")
-    return requeue_task(task_id=task.pk, actor=actor)
+    return requeue_task(task_id=task.pk, actor=actor, reset_progress=True)
 
 
 @transaction.atomic

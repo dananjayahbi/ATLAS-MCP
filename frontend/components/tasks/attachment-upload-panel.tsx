@@ -51,7 +51,7 @@ export function AttachmentUploadPanel({ taskId, onUploaded, disabled = false }: 
       <UploadDropzone
         files={files}
         onChange={setFiles}
-        disabled={attachments.uploading}
+        disabled={disabled || attachments.uploading}
         hint="Drop images for the agent to see"
       />
       {failed.length > 0 ? (
@@ -69,7 +69,7 @@ export function AttachmentUploadPanel({ taskId, onUploaded, disabled = false }: 
           variant="primary"
           onClick={() => void upload()}
           loading={attachments.uploading}
-          disabled={files.length === 0}
+          disabled={disabled || files.length === 0}
         >
           Upload {files.length > 0 ? `(${files.length})` : ""}
         </Button>

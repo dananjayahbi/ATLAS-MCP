@@ -114,6 +114,41 @@ class AssetContentView(AtlasAPIView):
         return response
 
 
+class AssetThumbnailView(AtlasAPIView):
+    """`GET /assets/{id}/thumbnail` — the downscaled sibling of an image asset.
+
+    Falls through to the original bytes when no thumbnail exists (non-images,
+    undecodable uploads, assets written before thumbnails existed), so callers
+    can always point an `<img>` here without special-casing.
+    """
+
+    def get(self, request, asset_id: str):
+        asset = _get_asset(asset_id)
+        relative = asset.thumbnail_relative_path or asset.relative_path
+        try:
+            path = router.open_task_file(relative)
+        except FileNotFoundError:
+            raise AssetNotFound(
+                "Asset bytes are missing on disk.",
+                detail={"asset_id": str(asset.pk)},
+            ) from None
+
+        # A thumbnail is derived from the original bytes, so the original's sha
+        # still busts the cache when burn-in rewrites the file.
+        etag = f'"{asset.sha256}-thumb"'
+        if etag in (request.headers.get("If-None-Match") or ""):
+            return HttpResponseNotModified()
+
+        mime = "image/jpeg" if path.suffix.lower() in {".jpg", ".jpeg"} else (
+            "image/png" if path.suffix.lower() == ".png" else asset.mime_type
+        )
+        response = FileResponse(path.open("rb"), content_type=mime)
+        response["ETag"] = etag
+        response["Cache-Control"] = "private, no-cache"
+        response["Content-Length"] = str(path.stat().st_size)
+        return response
+
+
 class AssetDetailView(AtlasAPIView):
     def get(self, request, asset_id: str):
         return Response(to_dto(_get_asset(asset_id)))
@@ -128,9 +163,12 @@ class AssetDetailView(AtlasAPIView):
         """
         asset = _get_asset(asset_id)
         relative = asset.relative_path
+        thumbnail = asset.thumbnail_relative_path
         documents = _annotation_document_paths(asset)
         asset.delete()
         _remove_stored_file(relative)
+        if thumbnail:
+            _remove_stored_file(thumbnail)
         # The stroke side-car is keyed by asset id, so nothing would ever read it
         # again once the row is gone.
         for document in documents:
@@ -171,8 +209,9 @@ class ProjectAssetPreviewView(AtlasAPIView):
         task_id_param = (request.query_params.get("task_id") or "").strip()
         if task_id_param:
             rows = rows.filter(task_id=task_id_param)
-            # One task is already a bounded list, so show the operator everything.
-            per_task = 200
+            # The task editor lists every image on one task, and uploads are
+            # uncapped, so this read must not truncate a long attachment list.
+            per_task = None
 
         grouped: dict[str, list[dict]] = {}
         counts: dict[str, int] = {}
@@ -180,7 +219,7 @@ class ProjectAssetPreviewView(AtlasAPIView):
             task_id = str(asset.task_id)
             total = counts.get(task_id, 0) + 1
             counts[task_id] = total
-            if total > per_task:
+            if per_task is not None and total > per_task:
                 continue
             grouped.setdefault(task_id, []).append(
                 {
@@ -192,6 +231,11 @@ class ProjectAssetPreviewView(AtlasAPIView):
                     "version": asset.sha256,
                     "created_at": _iso(asset.created_at),
                     "url": f"/api/v1/assets/{asset.pk}/content",
+                    "thumbnail_url": (
+                        f"/api/v1/assets/{asset.pk}/thumbnail"
+                        if asset.thumbnail_relative_path
+                        else None
+                    ),
                 }
             )
             if len(grouped) >= limit:
@@ -394,12 +438,17 @@ def _clear_annotation_document(source: Asset) -> None:
 
 def _replace_bytes(source: Asset, stored) -> None:
     """Overwrite the source asset's bytes, keeping its id stable for every link."""
+    from core.services.assets import refresh_thumbnail
+
     target = Path(to_absolute_native(source.relative_path))
     atomic_write_bytes(target, Path(stored.absolute_path).read_bytes())
     sha, size = _sha256_of(target)
     source.sha256 = sha
     source.byte_size = size
     source.save(update_fields=["sha256", "byte_size"])
+    # The pixels changed, so the derived thumbnail has to follow or the board
+    # would keep showing the pre-markup image.
+    refresh_thumbnail(source)
 
 
 def _iso(value):

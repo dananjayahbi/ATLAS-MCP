@@ -60,6 +60,44 @@ class NoEligibleTask:
     reason: str = "NO_ELIGIBLE_TASK"
 
 
+@dataclass(frozen=True)
+class ClaimLimitReached:
+    """Eligible work exists but the project's concurrent-claim ceiling is full.
+
+    Separate from `NoEligibleTask` on purpose: an agent must not treat "the
+    queue is empty" and "you already hold the maximum number of tasks" the same
+    way. The second one has an action attached — ask the operator.
+    """
+
+    limit: int
+    in_progress: int
+    reason: str = "CLAIM_LIMIT_REACHED"
+
+
+def claim_slots_used(project) -> int:
+    """Tasks currently held in this project, archived rows excluded."""
+    return Task.objects.filter(
+        project=project,
+        status=TaskStatus.IN_PROGRESS,
+        archived_at__isnull=True,
+    ).count()
+
+
+def limit_blocked(project) -> ClaimLimitReached | None:
+    """Return the blocking detail when `project.claim_limit` is already spent.
+
+    `claim_limit == 0` means unlimited; that is the operator's opt-out, not an
+    accidental zero that silently freezes a project.
+    """
+    limit = int(getattr(project, "claim_limit", 0) or 0)
+    if limit <= 0:
+        return None
+    used = claim_slots_used(project)
+    if used >= limit:
+        return ClaimLimitReached(limit=limit, in_progress=used)
+    return None
+
+
 def _eligible_candidates(project_id, min_priority: int):
     """Ordered candidate ids that pass the claim filter (Doc 01 §8 T5).
 
@@ -120,8 +158,12 @@ def claim_next_task(
     project_slug: str,
     agent_identifier: str,
     min_priority: int = 0,
-) -> ClaimResult | NoEligibleTask:
-    """Claim the highest-priority eligible task (Doc 01 §8 T5)."""
+) -> ClaimResult | NoEligibleTask | ClaimLimitReached:
+    """Claim the highest-priority eligible task (Doc 01 §8 T5).
+
+    Returns `ClaimLimitReached` when the project's concurrent-claim ceiling is
+    already spent; the agent's remedy is `request_claim_limit`, never a retry.
+    """
     try:
         project = Project.objects.get(slug=project_slug)
     except Project.DoesNotExist:
@@ -134,6 +176,20 @@ def claim_next_task(
 
     if project.archived_at is not None:
         return NoEligibleTask()
+
+    # The ceiling is checked before the queue scan: when the agent is already
+    # holding its quota, no candidate can be granted, and reporting the limit
+    # (rather than an empty queue) is what lets it ask the operator instead of
+    # looping on `NO_ELIGIBLE_TASK`.
+    blocked = limit_blocked(project)
+    if blocked is not None:
+        logger.info(
+            "claim blocked by limit project=%s limit=%d in_progress=%d",
+            project_slug,
+            blocked.limit,
+            blocked.in_progress,
+        )
+        return blocked
 
     for _ in range(CLAIM_ATTEMPTS):
         candidates = list(_eligible_candidates(project.pk, min_priority))

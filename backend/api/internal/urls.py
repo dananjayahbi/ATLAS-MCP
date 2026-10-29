@@ -15,4 +15,6 @@ urlpatterns = [
     path("propose", rpc.ProposeView.as_view(), name="internal-propose"),
     path("subtask", rpc.SubtaskView.as_view(), name="internal-subtask"),
     path("task", rpc.TaskRefView.as_view(), name="internal-task"),
+    path("tasks/search", rpc.TaskSearchView.as_view(), name="internal-task-search"),
+    path("claim-limit", rpc.ClaimLimitRequestView.as_view(), name="internal-claim-limit"),
 ]

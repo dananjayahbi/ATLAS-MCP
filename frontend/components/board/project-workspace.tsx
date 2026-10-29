@@ -23,6 +23,7 @@ import { WorkspaceRail } from "@/components/board/workspace-rail";
 import { PriorityMatrix } from "@/components/matrix/priority-matrix";
 import { MarkupModal, type MarkupImageEntry } from "@/components/markup/markup-modal";
 import { EditProjectDialog } from "@/components/projects/edit-project-dialog";
+import { ClaimLimitRequests } from "@/components/projects/claim-limit-requests";
 import { CreateTaskDialog } from "@/components/tasks/create-task-dialog";
 import { EditTaskDialog } from "@/components/tasks/edit-task-dialog";
 import { TaskBulkBar } from "@/components/tasks/task-bulk-bar";
@@ -208,6 +209,7 @@ export function ProjectWorkspace({ slug, className }: ProjectWorkspaceProps) {
     >
       <div className="flex min-h-0 flex-col gap-3">
         <TelemetryStrip telemetry={telemetry.data} />
+        <ClaimLimitRequests slug={slug} />
 
         <div
           className="grid min-h-0 gap-3 lg:grid-cols-[260px_minmax(0,1fr)]"
@@ -397,7 +399,6 @@ export function ProjectWorkspace({ slug, className }: ProjectWorkspaceProps) {
         slug={slug}
         onClose={() => setCreateOpen(false)}
         candidates={all.filter((task) => task.status !== "COMPLETED")}
-        onCreated={(task) => router.push(`/projects/${slug}/tasks/${task.id}`)}
       />
 
       {editingTask ? (

@@ -52,6 +52,14 @@ class AssetSource(models.TextChoices):
     SYSTEM = "SYSTEM", "System"
 
 
+class ClaimLimitRequestStatus(models.TextChoices):
+    """Lifecycle of an agent's ask to raise a project's concurrent-claim ceiling."""
+
+    PENDING = "PENDING", "Pending"
+    APPROVED = "APPROVED", "Approved"
+    DISMISSED = "DISMISSED", "Dismissed"
+
+
 class EventType(models.TextChoices):
     TASK_CREATED = "task.created", "Task created"
     TASK_UPDATED = "task.updated", "Task updated"
@@ -66,6 +74,8 @@ class EventType(models.TextChoices):
     DISCOVERY_CREATED = "discovery.created", "Discovery created"
     DISCOVERY_APPROVED = "discovery.approved", "Discovery approved"
     DISCOVERY_REJECTED = "discovery.rejected", "Discovery rejected"
+    CLAIM_LIMIT_REQUESTED = "claim_limit.requested", "Claim limit requested"
+    CLAIM_LIMIT_RESOLVED = "claim_limit.resolved", "Claim limit resolved"
     AGENT_CONNECTED = "agent.connected", "Agent connected"
     AGENT_HEARTBEAT = "agent.heartbeat", "Agent heartbeat"
     SYSTEM_BOOT = "system.boot", "System boot"
@@ -93,6 +103,9 @@ class AuditEvent(models.TextChoices):
     DISCOVERY_APPROVED = "DISCOVERY_APPROVED", "Discovery approved"
     DISCOVERY_REJECTED = "DISCOVERY_REJECTED", "Discovery rejected"
     SUBTASK_SPAWNED = "SUBTASK_SPAWNED", "Subtask spawned"
+    CLAIM_LIMIT_REQUESTED = "CLAIM_LIMIT_REQUESTED", "Claim limit requested"
+    CLAIM_LIMIT_APPROVED = "CLAIM_LIMIT_APPROVED", "Claim limit approved"
+    CLAIM_LIMIT_DISMISSED = "CLAIM_LIMIT_DISMISSED", "Claim limit dismissed"
     SYSTEM_BOOT = "SYSTEM_BOOT", "System boot"
     SYSTEM_CRASH_DETECTED = "SYSTEM_CRASH_DETECTED", "System crash detected"
     FILE_WRITE_FAILED = "FILE_WRITE_FAILED", "File write failed"
@@ -113,6 +126,8 @@ class ErrorCode:
     STALE_LEASE = "STALE_LEASE"
     DEPENDENCY_CYCLE = "DEPENDENCY_CYCLE"
     DEPENDENCY_UNSATISFIABLE = "DEPENDENCY_UNSATISFIABLE"
+    CLAIM_LIMIT_REACHED = "CLAIM_LIMIT_REACHED"
+    REVIEW_PRECONDITION_FAILED = "REVIEW_PRECONDITION_FAILED"
     PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE"
     UNSUPPORTED_MEDIA_TYPE = "UNSUPPORTED_MEDIA_TYPE"
     RATE_LIMITED = "RATE_LIMITED"
@@ -135,6 +150,8 @@ HTTP_STATUS_FOR_CODE = {
     ErrorCode.STALE_LEASE: 409,
     ErrorCode.DEPENDENCY_CYCLE: 409,
     ErrorCode.DEPENDENCY_UNSATISFIABLE: 409,
+    ErrorCode.CLAIM_LIMIT_REACHED: 409,
+    ErrorCode.REVIEW_PRECONDITION_FAILED: 409,
     ErrorCode.PAYLOAD_TOO_LARGE: 413,
     ErrorCode.UNSUPPORTED_MEDIA_TYPE: 415,
     ErrorCode.RATE_LIMITED: 429,

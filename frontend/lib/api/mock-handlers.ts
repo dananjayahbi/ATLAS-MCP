@@ -73,13 +73,17 @@ export function applyTaskAction(id: string, action: string, archived: boolean | 
     throw invalidTransition("requeue", detail.status);
   }
   // `POST /archive/` is a toggle: `{archived: false}` restores, and a body with
-  // no flag means "archive". Restore is the requeue transition plus a cleared stamp.
+  // no flag means "archive". Restore clears the stamp and resets DoD progress.
   const restoring = action === "archive" && archived === false;
-  if (action === "archive" && !restoring && detail.archived_at === null && detail.status !== "PENDING" && detail.status !== "REJECTED") {
-    throw invalidTransition("archive_task", detail.status);
-  }
   if (restoring && detail.archived_at === null) {
     throw invalidTransition("restore_task", detail.status);
+  }
+  if (restoring) {
+    for (const item of detail.definition_of_done) {
+      item.completed = false;
+      item.completed_at = null;
+    }
+    detail.dod_progress_percent = 0;
   }
   detail.archived_at = restoring ? null : action === "archive" ? new Date().toISOString() : detail.archived_at;
   detail.status = action === "archive" && !restoring ? "REJECTED" : "PENDING";

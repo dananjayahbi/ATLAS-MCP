@@ -22,6 +22,11 @@ class Asset(models.Model):
     byte_size = models.BigIntegerField()
     sha256 = models.CharField(max_length=64)
     source = models.CharField(max_length=8, choices=AssetSource.choices)
+    #: Downscaled sibling written next to the original on upload. Board cards,
+    #: list rows and the markup rail read this instead of the full-size bytes, so
+    #: a dashboard with many screenshots does not download every original.
+    #: Empty for non-image assets and for images Pillow could not decode.
+    thumbnail_relative_path = models.CharField(max_length=1024, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -22,8 +22,8 @@ import { DeleteTaskDialog } from "@/components/tasks/delete-task-dialog";
  * The archive is a separate read (`?archived=1`), not a status sweep: a task the
  * reviewer rejected is live work the operator can requeue, while a task the
  * operator archived has `archived_at` set and belongs here. Restore returns it
- * to PENDING (T13); delete is offered because an archived mistake should not be
- * permanent clutter.
+ * to PENDING with DoD progress reset to 0%; delete is offered because an
+ * archived mistake should not be permanent clutter.
  */
 
 export type ArchivedTaskListProps = {
@@ -104,6 +104,7 @@ export function ArchivedTaskList({ slug, projectName, className }: ArchivedTaskL
                   size="sm"
                   variant="primary"
                   onClick={() => void doRestore(task)}
+                  title="Restores to PENDING with 0% DoD progress"
                   loading={restore.isPending && restore.variables?.id === task.id}
                 >
                   Restore

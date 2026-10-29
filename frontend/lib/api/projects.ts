@@ -3,7 +3,7 @@ import { apiDelete, apiGet, apiPatch, apiPost } from "./client";
 
 /** Doc 01 §12 — `GET/POST /projects/`, `GET/PATCH /projects/{slug}/`. */
 
-export type ProjectPatch = Partial<Pick<ProjectDTO, "name" | "local_repo_path" | "accent_color" | "global_rules_md">>;
+export type ProjectPatch = Partial<Pick<ProjectDTO, "name" | "local_repo_path" | "accent_color" | "global_rules_md" | "claim_limit">>;
 
 export type ProjectCreateBody = {
   slug: string;
@@ -11,6 +11,7 @@ export type ProjectCreateBody = {
   local_repo_path: string;
   accent_color?: string;
   global_rules_md?: string;
+  claim_limit?: number;
 };
 
 export const projectsApi = {

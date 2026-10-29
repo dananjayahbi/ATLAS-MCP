@@ -31,6 +31,15 @@ def test_full_lifecycle(project, task):
 
     svc.log_progress(task_id=task.pk, message="running: pytest -k race", level="INFO")
 
+    # `IN_REVIEW` is only reachable at 100% DoD, so finish the remaining items.
+    for item_id in (2, 3):
+        svc.update_dod_item(
+            task_id=task.pk, item_id=item_id, completed=True,
+            agent_identifier="Agent-Claude",
+        )
+    task.refresh_from_db()
+    assert task.dod_progress_percent == 100
+
     submitted = svc.submit_for_review(
         task_id=task.pk,
         summary_of_work="Added a mutex around refresh.",

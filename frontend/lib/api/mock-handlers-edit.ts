@@ -49,10 +49,14 @@ export function updateProject(project: ProjectDTO, payload: Record<string, unkno
       field: "accent_color",
     });
   }
+  if ("claim_limit" in payload && (typeof payload.claim_limit !== "number" || !Number.isInteger(payload.claim_limit) || payload.claim_limit < 0 || payload.claim_limit > 50)) {
+    throw new ApiError("VALIDATION_ERROR", 400, "claim_limit must be an integer from 0 to 50", false, { field: "claim_limit" });
+  }
   for (const key of ["name", "local_repo_path", "accent_color", "global_rules_md"] as const) {
     const value = payload[key];
     if (typeof value === "string") project[key] = value;
   }
+  if (typeof payload.claim_limit === "number") project.claim_limit = payload.claim_limit;
   project.updated_at = new Date().toISOString();
   return project;
 }

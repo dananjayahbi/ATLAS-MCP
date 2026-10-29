@@ -289,8 +289,18 @@ def project_claimed_task(
 
     raw: Mapping[str, Any] = detail_dict or {}
     if raw.get("task_id") is None:
-        reason = raw.get("reason") or "NO_ELIGIBLE_TASK"
-        return {"task_id": None, "reason": str(reason)}
+        reason = str(raw.get("reason") or "NO_ELIGIBLE_TASK")
+        if reason == "CLAIM_LIMIT_REACHED":
+            # The agent needs the numbers and the remedy, not just a code: this
+            # is the one empty claim it can act on (by asking the operator).
+            return {
+                "task_id": None,
+                "reason": reason,
+                "claim_limit": clamp_int(raw.get("claim_limit"), 0, 50, 0),
+                "in_progress": clamp_int(raw.get("in_progress"), 0, 1000, 0),
+                "hint": truncate(raw.get("hint"), RULES_LIMIT),
+            }
+        return {"task_id": None, "reason": reason}
 
     rules_source = raw.get("project_rules")
     description_source = raw.get("description")
@@ -442,6 +452,64 @@ def project_subtask(raw: Mapping[str, Any] | None, now: Any = None) -> dict:
     )
 
 
+def project_search(raw: Mapping[str, Any] | None, now: Any = None) -> dict:
+    """``search_tasks`` body: a shortlist, rebuilt from the allow-list."""
+    del now
+    body: Mapping[str, Any] = raw or {}
+    rows = body.get("items")
+    items: list[dict] = []
+    if isinstance(rows, list):
+        for row in rows[:100]:
+            if not isinstance(row, Mapping):
+                continue
+            items.append(
+                {
+                    "task_id": str(row.get("task_id") or ""),
+                    "title": truncate(row.get("title"), TITLE_LIMIT),
+                    "status": str(row.get("status") or ""),
+                    "priority": clamp_int(row.get("priority"), 0, 100, 0),
+                    "is_blocked": bool(row.get("is_blocked")),
+                    "is_agent_discovered": bool(row.get("is_agent_discovered")),
+                    "dod_progress_percent": clamp_int(
+                        row.get("dod_progress_percent"), 0, 100, 0
+                    ),
+                    "assigned_agent_id": (
+                        str(row["assigned_agent_id"]) if row.get("assigned_agent_id") else None
+                    ),
+                }
+            )
+    count = len(items)
+    total = clamp_int(body.get("total_matched"), 0, 100_000, count)
+    return enforce_ceiling(
+        {
+            "project_slug": str(body.get("project_slug") or ""),
+            "count": count,
+            "total_matched": max(total, count),
+            "limit": clamp_int(body.get("limit"), 1, 100, 20),
+            "truncated": bool(body.get("truncated", total > count)),
+            "items": items,
+        },
+        tool="search_tasks",
+    )
+
+
+def project_claim_limit(raw: Mapping[str, Any] | None, now: Any = None) -> dict:
+    """``request_claim_limit`` body: the ask, plus what the agent does next."""
+    del now
+    body: Mapping[str, Any] = raw or {}
+    return enforce_ceiling(
+        {
+            "ok": bool(body.get("ok", True)),
+            "request_id": str(body.get("request_id") or ""),
+            "status": str(body.get("status") or "PENDING"),
+            "current_limit": clamp_int(body.get("current_limit"), 0, 50, 0),
+            "requested_limit": clamp_int(body.get("requested_limit"), 1, 50, 1),
+            "note": truncate(body.get("note"), REVIEW_NOTES_LIMIT),
+        },
+        tool="request_claim_limit",
+    )
+
+
 #: Registry used by the tools to look up their projection by tool name.
 PROJECTIONS = {
     "claim_next_task": project_claimed_task,
@@ -452,6 +520,8 @@ PROJECTIONS = {
     "update_dod_item": project_dod,
     "spawn_subtask": project_subtask,
     "get_task_details": project_task_detail,
+    "search_tasks": project_search,
+    "request_claim_limit": project_claim_limit,
 }
 
 __all__ = [
@@ -463,11 +533,13 @@ __all__ = [
     "enforce_ceiling",
     "fit_ceiling",
     "json_bytes",
+    "project_claim_limit",
     "project_claimed_task",
     "project_dod",
     "project_heartbeat",
     "project_progress",
     "project_propose",
+    "project_search",
     "project_submit",
     "project_subtask",
     "project_task_detail",

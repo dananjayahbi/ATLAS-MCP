@@ -8,6 +8,9 @@ from django.db import models
 
 from core.enums import HEALTH_DENOMINATOR_STATUSES, TaskStatus
 
+#: Default concurrent-claim ceiling for a new project (Doc 01 §8 T5).
+DEFAULT_CLAIM_LIMIT = 5
+
 
 class ProjectQuerySet(models.QuerySet):
     def active(self) -> "ProjectQuerySet":
@@ -21,6 +24,10 @@ class Project(models.Model):
     local_repo_path = models.CharField(max_length=1024)
     global_rules_md = models.TextField(blank=True, default="")
     accent_color = models.CharField(max_length=7, default="#00F2FE")
+    #: How many tasks an agent may hold `IN_PROGRESS` in this project at once.
+    #: `0` disables the ceiling. Enforced by `core.leases.claim_next_task`; an
+    #: agent cannot raise it itself, it can only file a `ClaimLimitRequest`.
+    claim_limit = models.PositiveSmallIntegerField(default=DEFAULT_CLAIM_LIMIT)
     archived_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

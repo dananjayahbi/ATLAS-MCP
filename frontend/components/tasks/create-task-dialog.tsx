@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { errorMessage } from "@/lib/api/errors";
 import { useCreateTask } from "@/lib/api/queries";
 import type { TaskCreateBody } from "@/lib/api/tasks";
@@ -29,6 +29,7 @@ export type CreateTaskDialogProps = {
   slug: string;
   onClose: () => void;
   onCreated?: (task: TaskSummaryDTO) => void;
+  keepOpenAfterCreate?: boolean;
   /** Tasks selectable as blockers (`blocked_by[]`). */
   candidates?: readonly TaskSummaryDTO[];
   defaultPriority?: number;
@@ -42,9 +43,11 @@ export function CreateTaskDialog({
   slug,
   onClose,
   onCreated,
+  keepOpenAfterCreate = true,
   candidates = [],
   defaultPriority = 50,
 }: CreateTaskDialogProps) {
+  const titleId = useId();
   const create = useCreateTask();
   const attachments = useAttachmentUpload();
   const [title, setTitle] = useState("");
@@ -55,6 +58,7 @@ export function CreateTaskDialog({
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [attempted, setAttempted] = useState(false);
+  const [createdTitle, setCreatedTitle] = useState<string | null>(null);
 
   const dodItems = useMemo(
     () => dod.split("\n").map((line) => line.trim()).filter(Boolean),
@@ -74,6 +78,7 @@ export function CreateTaskDialog({
     setFiles([]);
     setError(null);
     setAttempted(false);
+    setCreatedTitle(null);
   };
 
   const submit = async () => {
@@ -107,7 +112,12 @@ export function CreateTaskDialog({
       });
       onCreated?.(task);
       reset();
-      onClose();
+      if (keepOpenAfterCreate) {
+        setCreatedTitle(task.title);
+        requestAnimationFrame(() => document.getElementById(titleId)?.focus());
+      } else {
+        onClose();
+      }
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -159,8 +169,12 @@ export function CreateTaskDialog({
         }}
       >
         {error ? <AlertBanner severity="warning">{error}</AlertBanner> : null}
+        {createdTitle ? (
+          <p role="status" className="text-hud-micro text-flow">Created “{createdTitle}” — ready for the next one</p>
+        ) : null}
 
         <TextField
+          id={titleId}
           label="Title"
           required
           value={title}

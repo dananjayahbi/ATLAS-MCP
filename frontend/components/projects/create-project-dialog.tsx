@@ -48,6 +48,7 @@ export function CreateProjectDialog({ open, onClose, onCreated, defaultRepoPath 
   const [repoPath, setRepoPath] = useState(defaultRepoPath);
   const [accent, setAccent] = useState<string>(ACCENTS[0]);
   const [rules, setRules] = useState("");
+  const [claimLimit, setClaimLimit] = useState("5");
   const [error, setError] = useState<string | null>(null);
   const [attempted, setAttempted] = useState(false);
 
@@ -57,6 +58,9 @@ export function CreateProjectDialog({ open, onClose, onCreated, defaultRepoPath 
       : null;
   const nameError = attempted && name.trim().length === 0 ? "Name is required." : null;
   const pathError = attempted && repoPath.trim().length === 0 ? "Repository path is required." : null;
+  const limit = Number(claimLimit);
+  const limitValid = claimLimit.trim() !== "" && Number.isInteger(limit) && limit >= 0 && limit <= 50;
+  const limitError = attempted && !limitValid ? "Claim limit must be an integer from 0 to 50." : null;
 
   const reset = () => {
     setName("");
@@ -65,19 +69,21 @@ export function CreateProjectDialog({ open, onClose, onCreated, defaultRepoPath 
     setRepoPath(defaultRepoPath);
     setAccent(ACCENTS[0]);
     setRules("");
+    setClaimLimit("5");
     setError(null);
     setAttempted(false);
   };
 
   const submit = async () => {
     setAttempted(true);
-    if (!SLUG_RE.test(slug) || name.trim().length === 0 || repoPath.trim().length === 0) return;
+    if (!SLUG_RE.test(slug) || name.trim().length === 0 || repoPath.trim().length === 0 || !limitValid) return;
     const body: ProjectCreateBody = {
       slug,
       name: name.trim(),
       local_repo_path: repoPath.trim(),
       accent_color: HEX_RE.test(accent) ? accent : ACCENTS[0],
       ...(rules.trim() ? { global_rules_md: rules.trim() } : {}),
+      ...(limit !== 5 ? { claim_limit: limit } : {}),
     };
     try {
       const project = await create.mutateAsync(body);
@@ -166,6 +172,18 @@ export function CreateProjectDialog({ open, onClose, onCreated, defaultRepoPath 
           onChange={(event) => setRepoPath(event.target.value)}
           placeholder="E:\\dev\\alpha"
           hint="Absolute native path. Not verified to exist — archived machines still load."
+        />
+
+        <TextField
+          label="Claim limit"
+          type="number"
+          min={0}
+          max={50}
+          step={1}
+          value={claimLimit}
+          error={limitError}
+          onChange={(event) => setClaimLimit(event.target.value)}
+          hint="0 = unlimited · max tasks an agent may hold in progress"
         />
 
         <fieldset className="flex flex-col gap-1">

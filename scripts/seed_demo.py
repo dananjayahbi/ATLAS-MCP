@@ -49,6 +49,23 @@ BETA_TASKS = [
 ]
 
 
+def _complete_checklist(task, *, agent: str) -> None:
+    """Tick every DoD item, as an agent finishing the work would.
+
+    `submit_for_review` refuses to move a task to `IN_REVIEW` below 100 %, so the
+    demo data has to be produced through the same gate a real agent meets.
+    """
+    from core.models import ChecklistItem
+
+    for item in ChecklistItem.objects.filter(task=task).order_by("order_index"):
+        svc.update_dod_item(
+            task_id=task.pk,
+            item_id=item.order_index,
+            completed=True,
+            agent_identifier=agent,
+        )
+
+
 def seed() -> None:
     if Project.objects.filter(slug="alpha").exists():
         print("· demo data already present; nothing to do")
@@ -103,13 +120,18 @@ def seed() -> None:
             level="INFO",
         )
 
-    # One IN_REVIEW task: claim it properly so the lease guard is satisfied.
+    # One IN_REVIEW task: claim it properly so the lease guard is satisfied, log
+    # progress and finish the DoD — both are now preconditions of `IN_REVIEW`.
     review_target = created[3]
-    from core.models import Task as TaskModel
-
     leases.claim_specific_task(
         task_id=review_target.pk, agent_identifier="Agent-Claude"
     )
+    svc.log_progress(
+        task_id=review_target.pk,
+        message="probing the upload endpoint with mismatched magic bytes",
+        level="INFO",
+    )
+    _complete_checklist(review_target, agent="Agent-Claude")
     svc.submit_for_review(
         task_id=review_target.pk,
         summary_of_work="Byte-sniffing plus an allow-list.",
@@ -123,6 +145,12 @@ def seed() -> None:
     leases.claim_specific_task(
         task_id=completed.pk, agent_identifier="Agent-Copilot"
     )
+    svc.log_progress(
+        task_id=completed.pk,
+        message="making the reclaim sweep interval configurable",
+        level="INFO",
+    )
+    _complete_checklist(completed, agent="Agent-Copilot")
     svc.submit_for_review(
         task_id=completed.pk,
         summary_of_work="Sweep interval is configurable.",

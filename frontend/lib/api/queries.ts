@@ -2,6 +2,7 @@
 
 import { keepPreviousData, useQuery, type UseQueryResult } from "@tanstack/react-query";
 import type {
+  ClaimLimitRequestDTO,
   DiscoveryDTO,
   ListResponse,
   PriorityMatrixResponse,
@@ -10,6 +11,7 @@ import type {
   TaskSummaryDTO,
   TelemetrySummaryDTO,
 } from "@/lib/types/api";
+import { claimLimitsApi } from "./claim-limits";
 import { discoveriesApi } from "./discoveries";
 import { filterKey, qk, type BoardFilter } from "./keys";
 import { projectsApi } from "./projects";
@@ -113,6 +115,16 @@ export function useDiscoveries(): UseQueryResult<ListResponse<DiscoveryDTO>> {
     queryFn: ({ signal }) => discoveriesApi.list(signal),
     staleTime: 10_000,
     refetchInterval: 30_000,
+  });
+}
+
+export function useClaimLimitRequests(slug: string): UseQueryResult<ListResponse<ClaimLimitRequestDTO>> {
+  return useQuery({
+    queryKey: qk.claimLimits.list(slug),
+    queryFn: ({ signal }) => claimLimitsApi.pending(slug, signal),
+    staleTime: 10_000,
+    refetchInterval: 20_000,
+    enabled: slug.length > 0,
   });
 }
 

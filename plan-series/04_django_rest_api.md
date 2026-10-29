@@ -203,9 +203,14 @@ def get_dependency_weight(self, obj) -> float:
 | Endpoint | Behaviour |
 | :--- | :--- |
 | `POST /projects/` | Validate slug (`^[a-z][a-z0-9-]{1,31}$`, unique), path absolute string, create row, `scaffold_task`-style project scaffold (`project_meta.json` + `project_audit.log`), audit `PROJECT_CREATED`. |
-| `PATCH /projects/{slug}/` | Only `name`, `global_rules_md`, `accent_color`. `slug` and `local_repo_path` are `read_only` after creation (Doc 02 D7). |
+| `PATCH /projects/{slug}/` | Only `name`, `local_repo_path`, `global_rules_md`, `accent_color`, `claim_limit`. `slug` is `read_only` after creation (Doc 02 D7). |
 | `POST /projects/{slug}/archive/` | `{"archived": bool}`, omitted body toggles. Audit `PROJECT_ARCHIVED` / `PROJECT_RESTORED`. |
 | `GET /projects/` | `annotate` counters in a single query; `health_percent` from §6.9 of Doc 01. |
+
+`ProjectDTO` carries `claim_limit` (how many tasks an agent may hold `IN_PROGRESS`
+at once; `0` = unlimited) and `claim_slots_used` (how many it currently holds).
+`PATCH` validates `claim_limit` as an integer `0..50`. Only this route changes the
+ceiling — an agent asking for more goes through §5.10.
 
 Archiving a project hides it from `claim_next_task` (Doc 02 `eligible_for_claim` filters `archived_at__isnull=True`) **and** from `claim_specific_task` (T14) — otherwise `claim-for-agent` would be a hole in the archive. Everything stays readable, and `restore` clears `archived_at`.
 
@@ -302,7 +307,12 @@ class DiscoveryApprove(APIView):
 
 Approve sets `COMPLETED` + `completed_at`; reject returns to `PENDING` with notes (Doc 01 T9) and clears the lease.
 
-**DoD advisory, not a gate:** both responses include `dod_progress_percent`; the UI warns in amber when < 100 but does not block (Doc 01 §8).
+**DoD gate on the agent side, advisory on the human side.** `submit_for_review`
+(Doc 01 T7) refuses to move a task into `IN_REVIEW` unless the agent has logged
+progress **and** every DoD item is ticked — `409 REVIEW_PRECONDITION_FAILED` with
+`detail.field` naming which precondition failed. A human approving or rejecting is
+not re-gated: the reviewer's job is to judge finished work, and both responses
+still include `dod_progress_percent` so the UI can warn in amber.
 
 ### 5.8 Assets
 
@@ -331,11 +341,38 @@ survives as the `ANNOTATED_CANVAS` row. `GET` returns the side-car or `null`.
 
 `GET /projects/{slug}/assets/` returns `[{task_id, images[], total}]` with at most
 `PREVIEWS_PER_TASK = 3` images per task and the **true** total alongside, so the
-board can render a "+2" badge without a second query. This exists as its own
-route because `TaskSummaryDTO` is frozen at its projection budget (Doc 01 §7.3)
-and must not grow an `assets` array.
+board can render a "+2" badge without a second query. `?task_id=<uuid>` widens the
+cap to every image on that task (the editor's list, and uploads are uncapped).
+This exists as its own route because `TaskSummaryDTO` is frozen at its projection
+budget (Doc 01 §7.3) and must not grow an `assets` array.
 
-### 5.9 Telemetry & matrix
+**Thumbnails.** Every image asset gets a downscaled sibling at ingest
+(`core/services/thumbnails.py`, longest edge 400 px, PNG when it has alpha and
+otherwise JPEG q82) recorded in `Asset.thumbnail_relative_path`. `AssetDTO` exposes
+`thumbnail_url` → `GET /assets/{id}/thumbnail`, which falls back to the original
+bytes when no thumbnail exists (non-images, undecodable uploads, rows written
+before the feature). Small surfaces — board tiles, list rows, the editor's preview
+grid — use the thumbnail; full-size viewers (markup, canvas, the review pane) keep
+`/content`. Deleting an asset removes both files, and burn-in regenerates the
+thumbnail so the board never shows pre-markup pixels. Run
+`scripts/backfill_thumbnails.py` once after upgrading an existing install.
+
+### 5.10 Claim-limit requests
+
+| Endpoint | Body | Behaviour |
+| :--- | :--- | :--- |
+| `GET /claim-limit-requests/` | `?project_slug=` | Pending requests, newest first |
+| `POST /claim-limit-requests/{id}/resolve/` | `{"approve": bool, "note"?, "granted_limit"?}` | Approve applies the ceiling; dismiss leaves it untouched |
+
+These are the **operator** half of the concurrent-claim ceiling. The agent half is
+`POST /internal/v1/claim-limit` (§6), which only ever creates a `PENDING` row: an
+agent must not be able to raise its own limit, and keeping creation and resolution
+on different surfaces is what makes that structural rather than a convention.
+Approving applies `granted_limit` (defaulting to the requested value) to
+`Project.claim_limit`; `granted_limit = 0` ("unlimited") is rejected here because
+unlimited is an operator-only decision made in project settings.
+
+### 5.11 Telemetry & matrix
 
 | Endpoint | Query | Response |
 | :--- | :--- | :--- |

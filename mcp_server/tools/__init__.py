@@ -136,6 +136,7 @@ def _find_tool(mcp: Any, name: str) -> Any:
 # --- frozen registration order (§5.2) -------------------------------------
 
 from .claim import REGISTER as _register_claim  # noqa: E402
+from .claim_limit import REGISTER as _register_claim_limit  # noqa: E402
 from .propose import REGISTER as _register_propose  # noqa: E402
 from .submit import REGISTER as _register_submit  # noqa: E402
 from .progress import REGISTER as _register_progress  # noqa: E402
@@ -143,6 +144,7 @@ from .heartbeat import REGISTER as _register_heartbeat  # noqa: E402
 from .dod import REGISTER as _register_dod  # noqa: E402
 from .subtask import REGISTER as _register_subtask  # noqa: E402
 from .detail import REGISTER as _register_detail  # noqa: E402
+from .search import REGISTER as _register_search  # noqa: E402
 
 TOOLS: list[ToolSpec] = [
     _register_claim,
@@ -153,6 +155,10 @@ TOOLS: list[ToolSpec] = [
     _register_dod,
     _register_subtask,
     _register_detail,
+    # Orientation + escalation tools come last so a truncated tool list still
+    # shows the protocol-critical core first.
+    _register_search,
+    _register_claim_limit,
 ]
 
 #: Doc 08 §5.2 name for the same list.

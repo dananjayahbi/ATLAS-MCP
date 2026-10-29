@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 
 /**
- * Doc 06 §8.7 — the bulk bar. Every action is enabled only when the selection's
- * status makes the underlying transition legal; archive needs a typed confirm.
+ * Doc 06 §8.7 — the bulk bar. Requeue requires rejected tasks; archive is
+ * available for any selection and needs a typed confirm.
  */
 
 export type TaskBulkBarProps = {
@@ -45,7 +45,6 @@ export function TaskBulkBar({
   if (selected.length === 0) return null;
 
   const allRejected = selected.every((task) => task.status === "REJECTED");
-  const allPending = selected.every((task) => task.status === "PENDING");
   const shared = selected[0]?.priority ?? 50;
 
   return (
@@ -98,8 +97,7 @@ export function TaskBulkBar({
         size="sm"
         variant="danger"
         onClick={() => setConfirming(true)}
-        disabled={busy || !allPending}
-        title={allPending ? "T12: PENDING → REJECTED" : "Only PENDING tasks can be archived"}
+        disabled={busy}
       >
         Archive
       </Button>

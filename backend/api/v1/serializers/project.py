@@ -14,6 +14,7 @@ class ProjectSerializer(serializers.ModelSerializer):
     counters = serializers.SerializerMethodField()
     active_agent_id = serializers.SerializerMethodField()
     last_event_at = serializers.SerializerMethodField()
+    claim_slots_used = serializers.SerializerMethodField()
 
     class Meta:
         model = Project
@@ -25,6 +26,8 @@ class ProjectSerializer(serializers.ModelSerializer):
             "local_repo_path",
             "accent_color",
             "global_rules_md",
+            "claim_limit",
+            "claim_slots_used",
             "archived_at",
             "created_at",
             "updated_at",
@@ -40,6 +43,11 @@ class ProjectSerializer(serializers.ModelSerializer):
         from api.common.renderers import CONTRACT_VERSION
 
         return CONTRACT_VERSION
+
+    def get_claim_slots_used(self, obj: Project) -> int:
+        from core.leases import claim_slots_used
+
+        return claim_slots_used(obj)
 
     def get_counters(self, obj: Project) -> dict:
         return project_counters(obj)
@@ -63,6 +71,7 @@ class ProjectSerializer(serializers.ModelSerializer):
 def serialize_project(project: Project, *, counters: dict | None = None) -> dict:
     from api.common.renderers import CONTRACT_VERSION
     from core.enums import TaskStatus
+    from core.leases import claim_slots_used
 
     active_agent = (
         project.tasks.filter(status=TaskStatus.IN_PROGRESS)
@@ -79,6 +88,9 @@ def serialize_project(project: Project, *, counters: dict | None = None) -> dict
         "local_repo_path": project.local_repo_path,
         "accent_color": project.accent_color,
         "global_rules_md": project.global_rules_md,
+        # `claim_limit == 0` reads as "unlimited"; the UI renders it that way.
+        "claim_limit": project.claim_limit,
+        "claim_slots_used": claim_slots_used(project),
         "archived_at": iso(project.archived_at),
         "created_at": iso(project.created_at),
         "updated_at": iso(project.updated_at),

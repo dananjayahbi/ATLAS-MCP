@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { errorMessage } from "@/lib/api/errors";
+import type { ProjectPatch } from "@/lib/api/projects";
 import { useArchiveProject, usePurgeProject, useUpdateProject } from "@/lib/api/queries";
 import { toast } from "@/hooks/use-toast";
 import type { ProjectDTO } from "@/lib/types/api";
@@ -50,6 +51,7 @@ export function EditProjectDialog({
   const [repoPath, setRepoPath] = useState(project.local_repo_path);
   const [accent, setAccent] = useState(project.accent_color);
   const [rules, setRules] = useState(project.global_rules_md);
+  const [claimLimit, setClaimLimit] = useState(String(project.claim_limit));
   const [error, setError] = useState<string | null>(null);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -61,6 +63,7 @@ export function EditProjectDialog({
     setRepoPath(project.local_repo_path);
     setAccent(project.accent_color);
     setRules(project.global_rules_md);
+    setClaimLimit(String(project.claim_limit));
     setError(null);
     setConfirmArchive(false);
     setConfirmDelete(false);
@@ -73,18 +76,25 @@ export function EditProjectDialog({
     name.trim() !== project.name ||
     repoPath.trim() !== project.local_repo_path ||
     accent !== project.accent_color ||
-    rules !== project.global_rules_md;
+    rules !== project.global_rules_md ||
+    claimLimit !== String(project.claim_limit);
 
   const submit = async () => {
     if (!name.trim() || !repoPath.trim()) {
       setError("Name and repository path are required.");
       return;
     }
-    const body: Record<string, string> = {};
+    const limit = Number(claimLimit);
+    if (claimLimit.trim() === "" || !Number.isInteger(limit) || limit < 0 || limit > 50) {
+      setError("Claim limit must be an integer from 0 to 50.");
+      return;
+    }
+    const body: ProjectPatch = {};
     if (name.trim() !== project.name) body.name = name.trim();
     if (repoPath.trim() !== project.local_repo_path) body.local_repo_path = repoPath.trim();
     if (HEX_RE.test(accent) && accent !== project.accent_color) body.accent_color = accent;
     if (rules !== project.global_rules_md) body.global_rules_md = rules;
+    if (limit !== project.claim_limit) body.claim_limit = limit;
 
     if (Object.keys(body).length === 0) {
       onClose();
@@ -286,6 +296,18 @@ export function EditProjectDialog({
           disabled={confirmArchive || confirmDelete}
           onChange={(event) => setRepoPath(event.target.value)}
           hint="Absolute native path. Not verified to exist."
+        />
+
+        <TextField
+          label="Claim limit"
+          type="number"
+          min={0}
+          max={50}
+          step={1}
+          value={claimLimit}
+          disabled={confirmArchive || confirmDelete}
+          onChange={(event) => setClaimLimit(event.target.value)}
+          hint={`0 = unlimited · max tasks an agent may hold in progress · in progress now: ${project.claim_slots_used}`}
         />
 
         <fieldset className="flex flex-col gap-1" disabled={confirmArchive || confirmDelete}>

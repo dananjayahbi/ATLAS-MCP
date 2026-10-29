@@ -339,7 +339,9 @@ class AtlasClient:
 
 ## 7. Tool Catalogue
 
-All eight tools return one MCP content block of `type: "text"` holding a single JSON object. `isError` is set **only** when no JSON body could be produced (§13.1). Ids are strings; projections carry no timestamps (§8.2); `null` means absent — omission is forbidden (Doc 01 §7.1).
+All ten tools return one MCP content block of `type: "text"` holding a single JSON object. `isError` is set **only** when no JSON body could be produced (§13.1). Ids are strings; projections carry no timestamps (§8.2); `null` means absent — omission is forbidden (Doc 01 §7.1).
+
+The first eight are the frozen protocol surface. The last two (§7.9, §7.10) exist because a per-project claim ceiling and a large board made the original six-step loop insufficient: an agent needs a way to *find* relevant work without pulling everything, and a way to *ask* for more parallelism without being able to grant it to itself.
 
 ### 7.1 `claim_next_task` (core) — `POST /internal/v1/claim`
 
@@ -368,10 +370,15 @@ All eight tools return one MCP content block of `type: "text"` holding a single 
      "properties": {"id": {"type": "integer"}, "label": {"type": "string", "maxLength": 200},
                     "completed": {"type": "boolean"}}}},
    "attached_images": {"type": "array", "maxItems": 10, "items": {"type": "string"}},
-   "reason": {"type": "string", "enum": ["NO_ELIGIBLE_TASK"]}}}
+   "reason": {"type": "string", "enum": ["NO_ELIGIBLE_TASK", "CLAIM_LIMIT_REACHED"]},
+   "claim_limit": {"type": "integer", "minimum": 0, "maximum": 50},
+   "in_progress": {"type": "integer", "minimum": 0},
+   "hint": {"type": "string", "maxLength": 1200}}}
 ```
 
-`{"task_id": null, "reason": "NO_ELIGIBLE_TASK"}` — two keys only — is the **sole** empty result and is a success, never an error (Doc 01 §9.2). No other key appears in that case.
+`{"task_id": null, "reason": "NO_ELIGIBLE_TASK"}` — two keys only — is the empty result for an exhausted queue and is a success, never an error (Doc 01 §9.2). No other key appears in that case.
+
+`{"task_id": null, "reason": "CLAIM_LIMIT_REACHED", "claim_limit": 5, "in_progress": 5, "hint": "..."}` is the **different** empty result for a project whose concurrent-claim ceiling is spent. It is also a success, and it is deliberately distinguishable: eligible work exists, the agent simply may not hold more of it. The remedy is `request_claim_limit` (§7.10), never a retry loop.
 
 **Example**
 
@@ -462,7 +469,12 @@ All eight tools return one MCP content block of `type: "text"` holding a single 
 {"ok": true, "status": "IN_REVIEW", "dod_progress_percent": 100}
 ```
 
-**Failure modes.** `INVALID_ARGUMENT` when `git_patch` exceeds 5 MB (pre-flighted locally, never uploaded) or lacks `---`/`+++` markers · `TASK_CONFLICT` (`INVALID_TRANSITION`) when the task is not `IN_PROGRESS` · `LEASE_INVALID` (`STALE_LEASE`, Doc 01 T7) when the lease expired · duplicate submit of an identical patch succeeds idempotently per `(task_id, sha256(git_patch))` · `STORAGE_WRITE_FAILED` on a full disk. **Route.** `POST /internal/v1/submit`. No lease id is sent: Doc 01 §9.4 freezes the parameter list, so ownership is resolved server-side from `task_id` + `X-ATLAS-Agent`.
+**Failure modes.** `INVALID_ARGUMENT` when `git_patch` exceeds 5 MB (pre-flighted locally, never uploaded) or lacks `---`/`+++` markers · `TASK_CONFLICT` (`INVALID_TRANSITION`) when the task is not `IN_PROGRESS` · `LEASE_INVALID` (`STALE_LEASE`, Doc 01 T7) when the lease expired · `REVIEW_PRECONDITION_FAILED` (`409`) when the task has **no** `task.log` entry (the agent never called `log_task_progress`) or its DoD is below 100 % — `detail.field` says which, so the agent knows what to do next · duplicate submit of an identical patch succeeds idempotently per `(task_id, sha256(git_patch))` · `STORAGE_WRITE_FAILED` on a full disk. **Route.** `POST /internal/v1/submit`. No lease id is sent: Doc 01 §9.4 freezes the parameter list, so ownership is resolved server-side from `task_id` + `X-ATLAS-Agent`.
+
+**Preconditions.** Both are checked on every submit, including a re-submit of an already-`IN_REVIEW` task, because a reviewer rejection can untick DoD items:
+
+1. at least one `log_task_progress` entry exists for the task — "did you report progress?" is answered from the event log, not from a column the agent could set;
+2. `dod_progress_percent == 100` — `IN_REVIEW` means "please verify my finished work", so it must not be sendable while visible work remains.
 
 ### 7.4 `log_task_progress` (core) — `POST /internal/v1/progress`
 
@@ -618,6 +630,101 @@ All eight tools return one MCP content block of `type: "text"` holding a single 
 ```
 
 **Failure modes.** `TASK_NOT_FOUND` unknown id · `INVALID_ARGUMENT` malformed uuid · `BACKEND_UNAVAILABLE` with `detail.stage="projection"` if the body would exceed 16 kB. **Route.** `POST /internal/v1/task`.
+
+### 7.9 `search_tasks` (orientation) — `POST /internal/v1/tasks/search`
+
+**Purpose.** Answer "which tasks are about the POS terminal?" with a shortlist instead of the whole board. It closes the gap between `claim_next_task` (one task, chosen by priority) and `get_task_details` (needs an id): without it, an agent with a topical goal has to pull every task into context to find the relevant ones.
+
+**Parameters**
+
+```json
+{"type": "object", "required": ["project_slug"],
+ "properties": {
+   "project_slug": {"type": "string"},
+   "q": {"type": "string", "maxLength": 200,
+         "description": "Words to match in title or description, e.g. 'POS terminal'"},
+   "status": {"type": "array", "items": {"type": "string",
+              "enum": ["PENDING_APPROVAL", "PENDING", "IN_PROGRESS", "IN_REVIEW",
+                       "COMPLETED", "REJECTED"]}},
+   "priority_min": {"type": "integer", "minimum": 0, "maximum": 100},
+   "priority_max": {"type": "integer", "minimum": 0, "maximum": 100},
+   "agent": {"type": "string", "maxLength": 120},
+   "blocked_only": {"type": "boolean", "default": false},
+   "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+   "sort": {"type": "string", "enum": ["priority", "created", "updated"], "default": "priority"}}}
+```
+
+**Returns** — a deliberately tiny row per hit (no description, no DoD), plus the breadth of the full match set so the agent can tell a shortlist from a slice:
+
+```json
+{"type": "object", "required": ["project_slug", "count", "items"],
+ "properties": {
+   "project_slug": {"type": "string"}, "count": {"type": "integer"},
+   "total_matched": {"type": "integer"}, "limit": {"type": "integer"},
+   "truncated": {"type": "boolean"},
+   "items": {"type": "array", "maxItems": 100, "items": {
+     "type": "object", "required": ["task_id", "title", "status", "priority"],
+     "properties": {
+       "task_id": {"type": "string"}, "title": {"type": "string", "maxLength": 200},
+       "status": {"type": "string"}, "priority": {"type": "integer"},
+       "is_blocked": {"type": "boolean"}, "is_agent_discovered": {"type": "boolean"},
+       "dod_progress_percent": {"type": "integer"},
+       "assigned_agent_id": {"type": ["string", "null"]}}}}}}
+```
+
+**Example**
+
+```json
+{"project_slug": "pos-lite", "q": "POS terminal", "status": ["PENDING"], "limit": 10}
+{"project_slug": "pos-lite", "count": 2, "total_matched": 2, "limit": 10, "truncated": false,
+ "items": [{"task_id": "3b1f...", "title": "POS terminal receipt printer drops the tax line",
+            "status": "PENDING", "priority": 90, "is_blocked": false,
+            "is_agent_discovered": false, "dod_progress_percent": 0,
+            "assigned_agent_id": null}]}
+```
+
+**Semantics.** Search is **word-AND over title/description**, case-insensitive: `"POS terminal"` matches a title containing both words in either order. Wildcards are neutralised, so a query for `50%` cannot match everything. Archived tasks are never returned. Search leases **nothing** — the agent still has to `claim_next_task`.
+
+**Failure modes.** `INVALID_ARGUMENT` for an unknown status, an out-of-range priority, or a `limit` outside 1..100 · `PROJECT_NOT_FOUND` · `BACKEND_UNAVAILABLE` (`retryable: true`). **Route.** `POST /internal/v1/tasks/search`.
+
+### 7.10 `request_claim_limit` (escalation) — `POST /internal/v1/claim-limit`
+
+**Purpose.** Ask the operator to raise a project's concurrent-claim ceiling. This tool exists because the ceiling is an operator decision: an agent may recognise that it could handle more, but it must never be able to grant itself more. The request is recorded, surfaced on the project dashboard, and applied only by a human approval.
+
+**Parameters**
+
+```json
+{"type": "object", "required": ["project_slug", "requested_limit", "reason"],
+ "properties": {
+   "project_slug": {"type": "string"},
+   "requested_limit": {"type": "integer", "minimum": 1, "maximum": 50},
+   "reason": {"type": "string", "maxLength": 4000}}}
+```
+
+**Returns**
+
+```json
+{"type": "object", "required": ["ok", "request_id", "status"],
+ "properties": {
+   "ok": {"type": "boolean"}, "request_id": {"type": "string"},
+   "status": {"type": "string", "enum": ["PENDING", "APPROVED", "DISMISSED"]},
+   "current_limit": {"type": "integer"}, "requested_limit": {"type": "integer"},
+   "note": {"type": "string"}}}
+```
+
+**Example**
+
+```json
+{"project_slug": "pos-lite", "requested_limit": 8,
+ "reason": "Eight independent payment-gateway fixes are queued; they touch disjoint modules."}
+{"ok": true, "request_id": "9a44...", "status": "PENDING",
+ "current_limit": 5, "requested_limit": 8,
+ "note": "The operator must approve this request; the limit cannot be raised by an agent. Do not retry claims while the request is pending."}
+```
+
+**Semantics.** Creating a request never mutates `Project.claim_limit`. Re-asking for the same target while it is still pending returns the **existing** request instead of filing a duplicate. `requested_limit` must exceed the current limit, and `0` (unlimited) cannot be granted from an agent request — only the operator may set it.
+
+**Failure modes.** `VALIDATION_ERROR` when `requested_limit` does not exceed the current limit or is outside 1..50 · `PROJECT_NOT_FOUND`. **Route.** `POST /internal/v1/claim-limit`.
 
 ## 8. Token Projection Engine (`projections.py`)
 
@@ -861,8 +968,10 @@ Same Django response, projected on two hosts:
    - DO NOT fix them in your active branch.
    - Call `propose_task(...)` with clear reproduction steps and error logs.
    - Continue immediately with your assigned task.
-5. PROGRESS REPORTING: Fire `log_task_progress(...)` at each significant milestone (e.g., test reproduction, fix implementation, verification).
-6. VERIFICATION GATE: Before completing a task, execute the project test runner. Once passing, call `submit_for_review(...)` with your git patch. Do not attempt to merge directly into main.
+5. PROGRESS REPORTING: Fire `log_task_progress(...)` at each significant milestone (e.g., test reproduction, fix implementation, verification). This is mandatory: `submit_for_review` is rejected for a task with no progress entry.
+6. FINDING WORK BY TOPIC: If you are asked to work on a specific area (e.g. "the POS terminal first"), use `search_tasks(project_slug, q="POS terminal", status=["PENDING"])` to get a shortlist of ids. Search does not lease anything; you still claim before editing.
+7. CONCURRENCY LIMIT: Each project has a `claim_limit`. If `claim_next_task` returns `reason: "CLAIM_LIMIT_REACHED"`, you already hold the maximum number of tasks. Finish and submit them first. If you can genuinely take more, call `request_claim_limit(project_slug, requested_limit, reason)` **once** and continue with your current task. You cannot change the limit yourself and must not retry the claim in a loop while the request is pending.
+8. VERIFICATION GATE: Before completing a task, execute the project test runner. Tick every `definition_of_done` item: `submit_for_review` is rejected below 100 % DoD. Then call `submit_for_review(...)` with your git patch. Do not attempt to merge directly into main.
 ```
 
 | Destination | Purpose | Owner |
@@ -884,17 +993,19 @@ verify_cwd_from: local_repo_path
 scope: [description, definition_of_done]
 out_of_scope: {action: propose_task, then: continue_assigned_task}
 heartbeat: {tool: task_heartbeat, every_seconds: 120, on_stale: STOP_AND_RECLAIM}
-dod: {tool: update_dod_item, after_each_item: true}
-progress: {tool: log_task_progress, at: [repro, implement, verify], level: INFO}
-submit: {tool: submit_for_review, requires_passing_tests: true, require_patch: true}
-forbidden: [push_to_main, merge, force_push, skip_tests]
+dod: {tool: update_dod_item, after_each_item: true, must_be_complete_before_submit: true}
+progress: {tool: log_task_progress, at: [repro, implement, verify], level: INFO, required_before_submit: true}
+search: {tool: search_tasks, when: goal_names_an_area, leases_anything: false}
+claim_limit: {enforced_per_project: true, agent_may_raise: false, ask_tool: request_claim_limit, on_limit_reached: finish_held_tasks_first}
+submit: {tool: submit_for_review, requires_passing_tests: true, require_patch: true, requires_dod_percent: 100}
+forbidden: [push_to_main, merge, force_push, skip_tests, self_raising_claim_limit]
 ```
 
 A parser-friendly `.atlas/agent-rules.yaml` with identical content is emitted by Doc 10's harness setup; the `.md` form exists so agents that never read YAML still encounter the rules in a file listing.
 
 ### 10.3 Recommended agent loop
 
-1. **Claim** — `claim_next_task`; require `task_id != null`. On `NO_ELIGIBLE_TASK` **stop and wait**; never loop.
+1. **Claim** — `claim_next_task`; require `task_id != null`. On `NO_ELIGIBLE_TASK` **stop and wait**; never loop. On `CLAIM_LIMIT_REACHED`, finish what you hold (see step 12).
 2. **Verify cwd** — local shell; require shell root == `local_repo_path`.
 3. **Read context** — open every `attached_images` path locally; look at the images before editing.
 4. **Inspect rules** — `project_rules` plus the repo's `CLAUDE.md`/`copilot-instructions.md`; confirm the test command.
@@ -903,8 +1014,11 @@ A parser-friendly `.atlas/agent-rules.yaml` with identical content is emitted by
 7. **Heartbeat** — `task_heartbeat` every 120 s while working; on `LEASE_INVALID` → step 1.
 8. **Discovered anomaly** — `propose_task`, then **continue** at step 6. Never fix it in this branch.
 9. **Run tests** — local shell; require exit code 0.
-10. **Submit** — `submit_for_review`; require `ok: true`, `status: "IN_REVIEW"`.
+10. **Submit** — `submit_for_review`; require `ok: true`, `status: "IN_REVIEW"`. It fails unless you logged progress and every DoD item is ticked.
 11. **Stop** — do not claim a second task in the same session (§12.3).
+12. **Blocked by the ceiling** — on `CLAIM_LIMIT_REACHED`, you already hold `claim_limit` tasks. Submit them, then claim again. If the queue genuinely needs more parallelism, call `request_claim_limit` **once** with a concrete reason and keep working on what you hold; never retry the claim in a loop and never assume the limit changed.
+
+Orientation is a separate, non-leasing step: when a goal names an area rather than an id ("the POS terminal first"), call `search_tasks(project_slug, q=...)` and claim the row you pick. It exists so you never have to pull the whole board into context.
 
 Steps 5–8 are the only tool calls permitted *during* work; everything else is local shell/file work, which carries no MCP latency.
 

@@ -61,6 +61,10 @@ export const qk = {
     root: ["discoveries"] as const,
     list: (fk = "") => ["discoveries", "list", fk] as const,
   },
+  claimLimits: {
+    root: ["claimLimits"] as const,
+    list: (slug: string) => ["claimLimits", "list", slug] as const,
+  },
   reviews: {
     root: ["reviews"] as const,
     list: (fk = "") => ["reviews", "list", fk] as const,

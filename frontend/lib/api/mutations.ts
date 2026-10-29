@@ -1,8 +1,9 @@
 "use client";
 
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
-import type { DiscoveryDTO, ListResponse, ProjectDTO, TaskDetailDTO, TaskSummaryDTO } from "@/lib/types/api";
+import type { ClaimLimitRequestDTO, DiscoveryDTO, ListResponse, ProjectDTO, TaskDetailDTO, TaskSummaryDTO } from "@/lib/types/api";
 import type { ApiError } from "./client";
+import { claimLimitsApi, type ResolveClaimLimitBody } from "./claim-limits";
 import { discoveriesApi, type DiscoveryUpdateBody } from "./discoveries";
 import { qk } from "./keys";
 import { projectsApi, type ProjectCreateBody, type ProjectPatch } from "./projects";
@@ -102,6 +103,14 @@ export function useRequeueTask(): UseMutationResult<TaskSummaryDTO, ApiError, { 
     onSettled: (_data, _error, variables) => {
       invalidate([qk.tasks.detail(variables.id), qk.tasks.root, qk.projects.root]);
     },
+  });
+}
+
+export function useResolveClaimLimitRequest(): UseMutationResult<ClaimLimitRequestDTO, ApiError, { id: string; body: ResolveClaimLimitBody }> {
+  const invalidate = useInvalidate();
+  return useMutation<ClaimLimitRequestDTO, ApiError, { id: string; body: ResolveClaimLimitBody }>({
+    mutationFn: ({ id, body }) => claimLimitsApi.resolve(id, body),
+    onSettled: () => invalidate([qk.claimLimits.root, qk.projects.root]),
   });
 }
 

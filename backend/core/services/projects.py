@@ -12,6 +12,7 @@ from core.audit import audit
 from core.enums import AuditEvent
 from core.errors import ValidationError
 from core.models import Project
+from core.models.project import DEFAULT_CLAIM_LIMIT
 from core.storage import atomic_write_bytes, router
 
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$")
@@ -35,6 +36,7 @@ def create_project(
     local_repo_path: str,
     global_rules_md: str = "",
     accent_color: str = "#00F2FE",
+    claim_limit: int | None = None,
 ) -> Project:
     assert_slug(slug)
     if not (name or "").strip():
@@ -50,6 +52,8 @@ def create_project(
         raise ValidationError("A project with that slug already exists.",
                               detail={"field": "slug", "value": slug})
 
+    from core.services.claim_limits import assert_claim_limit
+
     project = Project.objects.create(
         id=uuid.uuid4(),
         slug=slug,
@@ -57,6 +61,10 @@ def create_project(
         local_repo_path=local_repo_path.strip(),
         global_rules_md=global_rules_md or "",
         accent_color=accent_color,
+        claim_limit=(
+            assert_claim_limit(claim_limit) if claim_limit is not None
+            else DEFAULT_CLAIM_LIMIT
+        ),
     )
     router.scaffold_project(project.pk)
     atomic_write_bytes(
@@ -78,13 +86,17 @@ def create_project(
 
 @transaction.atomic
 def update_project(project: Project, **fields) -> Project:
-    allowed = {"name", "local_repo_path", "global_rules_md", "accent_color"}
+    allowed = {"name", "local_repo_path", "global_rules_md", "accent_color", "claim_limit"}
     for key, value in fields.items():
         if key not in allowed:
             continue
         if key == "accent_color" and not _HEX.match(value or ""):
             raise ValidationError("accent_color must be a #RRGGBB hex.",
                                   detail={"field": "accent_color"})
+        if key == "claim_limit":
+            from core.services.claim_limits import assert_claim_limit
+
+            value = assert_claim_limit(value)
         setattr(project, key, value)
     project.save()
     return project

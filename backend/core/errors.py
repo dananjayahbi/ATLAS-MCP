@@ -103,6 +103,26 @@ class DependencyUnsatisfiable(AtlasError):
     code = ErrorCode.DEPENDENCY_UNSATISFIABLE
 
 
+class ClaimLimitReached(AtlasError):
+    """The project's concurrent-claim ceiling is full.
+
+    Distinct from `NO_ELIGIBLE_TASK`: eligible work exists, the agent is simply
+    not allowed to hold more of it. The agent's remedy is `request_claim_limit`,
+    never a retry loop.
+    """
+
+    code = ErrorCode.CLAIM_LIMIT_REACHED
+
+    def __init__(self, message: str, *, detail: dict[str, Any] | None = None) -> None:
+        super().__init__(message, detail=detail)
+
+
+class ReviewPreconditionFailed(AtlasError):
+    """`submit_for_review` was called without the evidence it requires."""
+
+    code = ErrorCode.REVIEW_PRECONDITION_FAILED
+
+
 class PayloadTooLarge(AtlasError):
     code = ErrorCode.PAYLOAD_TOO_LARGE
 

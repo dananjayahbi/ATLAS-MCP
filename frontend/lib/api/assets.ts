@@ -16,6 +16,7 @@ export type AssetPreview = {
   filename: string;
   mime_type: string;
   url: string;
+  thumbnail_url?: string | null;
   /** Content hash; the only cache-buster for burn-in, which keeps the id. */
   version?: string;
   /** Present on the task-scoped preview read (`?task_id=`). */
@@ -55,6 +56,10 @@ export function assetContentUrl(assetId: string, version?: string | null): strin
 
 export const assetsApi = {
   contentUrl: (assetId: string, version?: string | null): string => assetContentUrl(assetId, version),
+  thumbnailUrl: (assetId: string, version?: string | null): string => {
+    const base = `/api/v1/assets/${encodeURIComponent(assetId)}/thumbnail`;
+    return version ? `${base}?v=${encodeURIComponent(version)}` : base;
+  },
   downloadUrl: (assetId: string): string => `/api/v1/assets/${encodeURIComponent(assetId)}/download`,
   upload: (taskId: string, kind: AssetKind, file: File) => {
     const form = new FormData();

@@ -18,12 +18,29 @@ export type ProjectDTO = {
   local_repo_path: string;
   accent_color: string;
   global_rules_md: string;
+  claim_limit: number;
+  claim_slots_used: number;
   archived_at: string | null;
   created_at: string;
   updated_at: string;
   counters: ProjectCounters;
   active_agent_id: string | null;
   last_event_at: string | null;
+};
+
+export type ClaimLimitRequestDTO = {
+  id: string;
+  project_slug: string;
+  requested_by_agent: string;
+  current_limit: number;
+  requested_limit: number;
+  reason: string;
+  status: "PENDING" | "APPROVED" | "DISMISSED";
+  resolved_by: string;
+  resolution_note: string;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 /** Doc 01 §7.3 */

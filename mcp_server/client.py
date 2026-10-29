@@ -44,6 +44,8 @@ HEARTBEAT_PATH = "/internal/v1/heartbeat"
 DOD_PATH = "/internal/v1/dod"
 SUBTASK_PATH = "/internal/v1/subtask"
 TASK_PATH = "/internal/v1/task"
+TASK_SEARCH_PATH = "/internal/v1/tasks/search"
+CLAIM_LIMIT_PATH = "/internal/v1/claim-limit"
 HEALTH_PATH = "/healthz"
 
 #: Transport faults that are never retried because a replay cannot fix them.

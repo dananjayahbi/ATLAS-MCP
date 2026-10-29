@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Gauge } from "@/components/ui/gauge";
 import { Tabs } from "@/components/ui/tabs";
 import { shortTaskId } from "@/lib/format/path";
+import { assetImageUrl } from "@/lib/format/asset-image";
 
 /** Doc 06 §10.2–§10.4 — one task under review: header, DoD, tabs, patch viewer. */
 
@@ -78,7 +79,7 @@ export function ReviewPane({ task }: { task: TaskDetailDTO }) {
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={assetsApi.contentUrl(asset.id, asset.version)}
+                      src={assetImageUrl(asset)}
                       alt={asset.filename}
                       className="h-40 w-full object-contain"
                     />

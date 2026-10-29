@@ -6,7 +6,7 @@ the wiring end-to-end rather than importing modules in-process.
 
 Checks:
   1. `initialize` handshake
-  2. all 8 tools advertised with the frozen names
+  2. every tool advertised with its frozen name
   3. `claim_next_task` returns a projected task within the 16 kB ceiling
   4. `log_task_progress` returns exactly `{"ok": true}`
   5. `task_heartbeat` returns `seconds_remaining`
@@ -49,6 +49,12 @@ SUPPORT_TOOLS = [
     "update_dod_item",
     "spawn_subtask",
     "get_task_details",
+]
+#: Orientation / escalation tools. Kept separate so a truncated tool list still
+#: advertises the protocol-critical core + support set first.
+EXTRA_TOOLS = [
+    "search_tasks",
+    "request_claim_limit",
 ]
 CEILING = 16_384
 
@@ -146,15 +152,15 @@ async def probe() -> int:
 
             listed = await session.list_tools()
             names = sorted(t.name for t in listed.tools)
-            expected = sorted(CORE_TOOLS + SUPPORT_TOOLS)
+            expected = sorted(CORE_TOOLS + SUPPORT_TOOLS + EXTRA_TOOLS)
             check(
-                "all 8 frozen tools advertised",
+                f"all {len(expected)} tools advertised",
                 names == expected,
                 f"{len(names)} tools",
             )
             missing = [n for n in expected if n not in names]
             if missing:
-                check("frozen tool names", False, f"missing {missing}")
+                check("tool names", False, f"missing {missing}")
 
             # --- claim ----------------------------------------------------
             claim = await session.call_tool(

@@ -136,16 +136,26 @@ def test_restoring_a_task_that_is_not_archived_is_a_conflict(client, task):
     assert response.status_code == 409
 
 
-def test_archiving_live_work_is_refused(client, task):
-    """Only queued or rejected work can be filed away — never live work."""
-    _patch_status(client, task, "IN_PROGRESS")
+def test_archiving_live_work_releases_it(client, task):
+    """Any status can be filed away, and archiving drops the live claim.
 
-    response = _post(client, f"/api/v1/tasks/{task.pk}/archive/", {"archived": True})
-    assert response.status_code == 409
-
+    Parking an in-progress task is a legitimate operator action (the board's bulk
+    bar offers it), so the guard is not "which status" but "the lease must not
+    survive": a filed-away row must stop holding a claim slot.
+    """
     from core.models import Task
 
-    assert Task.objects.get(pk=task.pk).archived_at is None
+    _patch_status(client, task, "IN_PROGRESS")
+    assert Task.objects.get(pk=task.pk).lease_id is not None
+
+    response = _post(client, f"/api/v1/tasks/{task.pk}/archive/", {"archived": True})
+    assert response.status_code == 200, response.content
+
+    row = Task.objects.get(pk=task.pk)
+    assert row.archived_at is not None
+    assert row.status == "REJECTED"
+    assert row.lease_id is None
+    assert row.lease_expires_at is None
 
 
 # ---------------------------------------------------------------------------

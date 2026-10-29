@@ -78,6 +78,7 @@ export type AssetDTO = {
   source: AssetSource;
   absolute_path: string;
   url: string;
+  thumbnail_url?: string | null;
   /** Content hash; changes when the bytes do (burn-in rewrites under the same id). */
   version?: string;
   created_at: string;

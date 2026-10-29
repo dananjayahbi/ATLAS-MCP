@@ -246,16 +246,10 @@ def test_archived_discoveries_do_not_reappear_in_triage(client, discovery):
 # ---------------------------------------------------------------------------
 def _completed(client, task) -> None:
     """Drive `task` to COMPLETED through the real transitions."""
-    from core.services.tasks import submit_for_review
+    from tests.conftest import drive_to_review
 
     leases.claim_specific_task(task_id=str(task.pk), agent_identifier="Agent-Test")
-    submit_for_review(
-        task_id=str(task.pk),
-        summary_of_work="Done.",
-        git_patch="--- a\n+++ b\n",
-        verification_log="1 passed",
-        agent_identifier="Agent-Test",
-    )
+    drive_to_review(task, agent="Agent-Test", patch="--- a\n+++ b\n")
     response = _post(client, f"/api/v1/reviews/{task.pk}/approve/")
     assert response.status_code == 200
     assert response.json()["status"] == "COMPLETED"

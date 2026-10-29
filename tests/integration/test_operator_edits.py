@@ -96,11 +96,10 @@ def test_patch_task_rewrites_dod_and_keeps_completion_by_label(client, task):
 def test_completed_task_cannot_be_edited(client, task):
     from core import leases
     from core.services import tasks as task_service
+    from tests.conftest import drive_to_review
 
     leases.claim_specific_task(task_id=task.pk, agent_identifier="Agent-Claude")
-    task_service.submit_for_review(
-        task_id=task.pk, summary_of_work="done", git_patch="--- a\n+++ b\n"
-    )
+    drive_to_review(task, agent="Agent-Claude")
     task_service.approve_review(task_id=task.pk)
 
     response = _patch(client, f"/api/v1/tasks/{task.pk}/", {"title": "nope"})
@@ -166,12 +165,10 @@ def test_status_rejects_a_no_op(client, task):
 
 def test_status_reopen_from_review_requires_notes(client, task):
     from core import leases
-    from core.services import tasks as task_service
+    from tests.conftest import drive_to_review
 
     leases.claim_specific_task(task_id=task.pk, agent_identifier="Agent-Claude")
-    task_service.submit_for_review(
-        task_id=task.pk, summary_of_work="done", git_patch="--- a\n+++ b\n"
-    )
+    drive_to_review(task, agent="Agent-Claude")
     response = _patch(client, f"/api/v1/tasks/{task.pk}/status/", {"status": "PENDING"})
     # A default note is supplied by the route, so this succeeds and lands in PENDING.
     assert response.status_code == 200, response.content

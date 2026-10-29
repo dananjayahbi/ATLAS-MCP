@@ -97,7 +97,7 @@ ATLAS-MCP/
 │   ├── lib/            api client, types, sse client, markup, canvas engine, format
 │   ├── hooks/          keyboard, hotkeys, toast, clock, markup history, queues
 │   └── styles/         frozen design tokens
-├── mcp_server/         FastMCP stdio server exposing 8 tools
+├── mcp_server/         FastMCP stdio server exposing 10 tools
 ├── storage/            runtime artifacts (gitignored)
 ├── scripts/            bootstrap, seed, mocks, verification gates
 └── tests/              unit, integration (DB), e2e
@@ -242,17 +242,58 @@ would misreport an ordinary burst as a backend fault and would select the
 | `update_dod_item` | supporting | Tick a definition-of-done item |
 | `spawn_subtask` | supporting | Create a child task |
 | `get_task_details` | supporting | Re-read a projected task |
+| `search_tasks` | orientation | Filter a project's tasks by text/status/priority without leasing |
+| `request_claim_limit` | escalation | Ask the operator to raise the project's concurrent-claim limit |
+
+`claim_next_task` is bounded by the project's **claim limit** (set in project
+settings, `0` = unlimited). When the ceiling is spent it answers
+`reason: "CLAIM_LIMIT_REACHED"` rather than an empty queue, so the agent knows to
+finish what it holds — or to ask, once, via `request_claim_limit`. An agent can
+never raise the limit itself: the ask lands in the project dashboard and only an
+operator approval applies it.
+
+`submit_for_review` refuses to move a task to `IN_REVIEW` unless the agent has
+logged progress **and** every definition-of-done item is ticked (100 %).
 
 `python scripts/bootstrap_dev.py` prints a ready-to-paste
 `.vscode/mcp.json` / `claude_desktop_config.json` block.
 
 ---
 
+## Operator controls
+
+A few behaviours that are worth knowing before you use the board:
+
+- **Attachments are uncapped.** A task can carry as many screenshots as it needs
+  (8 MB per file). Drag, drop, click-to-browse, and **Ctrl+V paste** all work —
+  pasting a Snipping Tool capture is the intended flow, so you never have to find
+  the temp folder.
+- **Creating a task keeps the dialog open.** The form clears and refocuses the
+  title, so adding ten tasks in a row is ten typing bursts, not ten navigations.
+  The task detail page is one click away when you actually want it.
+- **Every task can be archived**, from any status. Restoring one returns it to
+  `PENDING` with its DoD progress reset to 0 %, because filed-away work re-enters
+  the queue unverified.
+- **Images have thumbnails.** Each upload also writes a ≤ 400 px copy; board tiles
+  and list rows read that instead of the original (roughly 80 % less bytes on a
+  screenshot-heavy board). Full-size viewers still get real pixels.
+- **Per-project claim limit.** Project settings has a `Claim limit` field: the
+  number of tasks one agent may hold `IN_PROGRESS` at once (`0` = unlimited). When
+  an agent asks for more it appears as a **Claim limit requests** panel at the top
+  of that project's dashboard; approving applies the new ceiling, and the agent
+  cannot change it itself.
+
+Upgrading an existing install: `migrate` adds the new columns, then run
+`python scripts/backfill_thumbnails.py` once so already-stored screenshots get
+their thumbnails.
+
+---
+
 ## Verification
 
 ```powershell
-# Backend: 65 integration tests (incl. the 20-thread claim race, I1–I6, and
-# the 22 operator-edit guards covering edit / delete / archive / status / markup)
+# Backend: 132 tests (incl. the 20-thread claim race, I1–I6, the 22 operator-edit
+# guards, and the operator-controls series: claim limits, review gates, search, thumbnails)
 .\.venv\Scripts\python.exe -m pytest -q
 
 # Frontend: 51 unit tests (SSE parser, ring buffer, formatters, API client)
@@ -262,11 +303,18 @@ npm --prefix frontend test
 npm --prefix frontend run test:e2e
 
 # Cross-document drift gates (tokens, error codes, constants, migrations,
-# routes, encoding, doc structure) — 7 gates, 39 routes
+# routes, encoding, doc structure) — 7 gates, 46 routes
 .\.venv\Scripts\python.exe scripts\verify_series.py
 
 # MCP handshake against the live backend
 .\.venv\Scripts\python.exe scripts\mcp_probe.py
+
+# Operator-controls behaviour against a scratch instance (42 checks; never
+# touches the live DB — point it at an isolated ATLAS_DB_PATH/port)
+.\.venv\Scripts\python.exe scripts\verify_operator_controls.py
+
+# The two orientation/escalation tools through the real stdio MCP client
+.\.venv\Scripts\python.exe scripts\mcp_probe_operator.py
 
 # Production build (bundle budget check)
 npm --prefix frontend run build

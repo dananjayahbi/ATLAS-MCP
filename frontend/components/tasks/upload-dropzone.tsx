@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/format/cn";
+import { imageFilesFromClipboard } from "@/lib/files/clipboard";
 
 /**
  * Doc 06 §7.2 / Doc 07 §9.4 — the attachment surface behind the composer and the
@@ -12,7 +13,6 @@ import { cn } from "@/lib/format/cn";
  */
 
 export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-export const MAX_IMAGES = 5;
 
 export type UploadDropzoneProps = {
   /** Already-accepted files, owned by the caller. */
@@ -35,7 +35,7 @@ export function UploadDropzone({
   files,
   onChange,
   accept = "image/png,image/jpeg,image/webp",
-  maxFiles = MAX_IMAGES,
+  maxFiles,
   maxBytes = MAX_IMAGE_BYTES,
   disabled = false,
   label = "Screenshots",
@@ -58,7 +58,7 @@ export function UploadDropzone({
   }, [previews]);
 
   const accept_ = useCallback(
-    (incoming: FileList | null) => {
+    (incoming: FileList | readonly File[] | null) => {
       if (!incoming || incoming.length === 0) return;
       const next: File[] = [];
       let problem: string | null = null;
@@ -84,14 +84,32 @@ export function UploadDropzone({
         );
         if (!duplicate) merged.push(file);
       }
-      if (merged.length > maxFiles) {
+      if (maxFiles !== undefined && merged.length > maxFiles) {
         problem = `At most ${maxFiles} images per task.`;
       }
       setError(problem);
-      onChange(merged.slice(0, maxFiles));
+      onChange(maxFiles === undefined ? merged : merged.slice(0, maxFiles));
     },
     [files, maxBytes, maxFiles, onChange],
   );
+
+  useEffect(() => {
+    if (disabled) return;
+    const onPaste = (event: ClipboardEvent) => {
+      const target = event.target;
+      if (target instanceof Element) {
+        if (target.closest("input, textarea")) return;
+        const editable = target instanceof HTMLElement ? target : target.parentElement;
+        if (editable?.isContentEditable) return;
+      }
+      const images = imageFilesFromClipboard(event);
+      if (images.length === 0) return;
+      event.preventDefault();
+      accept_(images);
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [accept_, disabled]);
 
   const remove = (index: number) => {
     setError(null);
@@ -125,7 +143,7 @@ export function UploadDropzone({
           ref={inputRef}
           type="file"
           accept={accept}
-          multiple={maxFiles > 1}
+          multiple
           disabled={disabled}
           onChange={(event) => {
             accept_(event.target.files);
@@ -146,7 +164,7 @@ export function UploadDropzone({
           Choose images
         </button>
         <p className="mt-1 font-machine text-hud-micro text-disabled">
-          {files.length}/{maxFiles} · PNG/JPEG/WebP · max {Math.round(maxBytes / 1024 / 1024)} MB each
+          {maxFiles === undefined ? `${files.length} selected` : `${files.length}/${maxFiles}`} · PNG/JPEG/WebP · max {Math.round(maxBytes / 1024 / 1024)} MB each · paste with Ctrl+V
         </p>
       </div>
 

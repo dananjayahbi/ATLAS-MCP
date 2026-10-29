@@ -33,6 +33,20 @@ class ClaimView(AtlasAgentView):
             agent_identifier=data["agent_identifier"],
             min_priority=data["min_priority"],
         )
+        if isinstance(result, leases.ClaimLimitReached):
+            return Response(
+                {
+                    "task_id": None,
+                    "reason": result.reason,
+                    "claim_limit": result.limit,
+                    "in_progress": result.in_progress,
+                    "hint": (
+                        "The project's concurrent-claim limit is reached. Finish and "
+                        "submit the tasks you already hold, or call request_claim_limit "
+                        "to ask the operator for a higher ceiling. Do not retry in a loop."
+                    ),
+                }
+            )
         if isinstance(result, leases.NoEligibleTask):
             return Response({"task_id": None, "reason": result.reason})
 
@@ -164,3 +178,70 @@ class TaskRefView(AtlasAgentView):
             serialize_event(e) for e in reversed(list(task.events.order_by("-seq")[:20]))
         ]
         return Response(payload)
+
+
+class TaskSearchView(AtlasAgentView):
+    """`POST /internal/v1/tasks/search` — filter the queue before claiming.
+
+    An agent that pulls the whole board burns its context on unrelated work.
+    This route answers "what pending POS-terminal tasks exist?" with a shortlist,
+    so `claim_next_task` stays the only way to take work.
+    """
+
+    def post(self, request):
+        from api.internal.projections_extra import project_search_response
+        from core.services import search as search_service
+
+        data = _validated(ser.TaskSearchRequest, body(request))
+        project = search_service.get_project_for_search(data["project_slug"])
+        rows = search_service.search_tasks(
+            project,
+            query=data.get("q"),
+            statuses=data.get("status"),
+            priority_min=data.get("priority_min"),
+            priority_max=data.get("priority_max"),
+            agent=data.get("agent"),
+            blocked_only=data.get("blocked_only", False),
+            limit=data.get("limit", 20),
+            sort=data.get("sort", "priority"),
+        )
+        # `total_matched` lets the agent tell "there are 3" from "there are 300,
+        # here are 20", which changes whether it narrows the query.
+        total = search_service.count_matches(
+            project,
+            query=data.get("q"),
+            statuses=data.get("status"),
+            priority_min=data.get("priority_min"),
+            priority_max=data.get("priority_max"),
+            agent=data.get("agent"),
+            blocked_only=data.get("blocked_only", False),
+        )
+        return Response(
+            project_search_response(
+                rows,
+                project_slug=str(data["project_slug"]),
+                total_matched=total,
+                limit=data.get("limit", 20),
+            )
+        )
+
+
+class ClaimLimitRequestView(AtlasAgentView):
+    """`POST /internal/v1/claim-limit` — ask the operator for a higher ceiling.
+
+    Deliberately one-way: creating a request never changes `Project.claim_limit`.
+    Only the operator's approve route does that.
+    """
+
+    def post(self, request):
+        from api.internal.projections_extra import project_claim_request
+        from core.services import claim_limits
+
+        data = _validated(ser.ClaimLimitRequestCreate, body(request))
+        row = claim_limits.request_limit(
+            project_slug=data["project_slug"],
+            requested_limit=data["requested_limit"],
+            reason=data.get("reason") or "",
+            agent_identifier=self.agent(request),
+        )
+        return Response(project_claim_request(row))

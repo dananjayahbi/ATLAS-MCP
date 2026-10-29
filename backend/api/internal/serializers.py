@@ -5,6 +5,32 @@ from __future__ import annotations
 from rest_framework import serializers
 
 
+class StatusListField(serializers.Field):
+    """Accepts `["PENDING","IN_REVIEW"]` or `"PENDING,IN_REVIEW"`.
+
+    Agents speak JSON arrays; query-style callers use one CSV string. Validating
+    the values is `core.services.search.parse_statuses`' job, so both shapes are
+    normalised to a list here and the service reports the unknown values.
+    """
+
+    def to_internal_value(self, data):
+        if data is None:
+            return []
+        if isinstance(data, str):
+            return [part.strip() for part in data.split(",") if part.strip()]
+        if isinstance(data, (list, tuple)):
+            values: list[str] = []
+            for entry in data:
+                if not isinstance(entry, str):
+                    raise serializers.ValidationError("status entries must be strings.")
+                values.extend(part.strip() for part in entry.split(",") if part.strip())
+            return values
+        raise serializers.ValidationError("status must be a string or an array of strings.")
+
+    def to_representation(self, value):  # pragma: no cover - read-only surface
+        return list(value or [])
+
+
 class ClaimRequest(serializers.Serializer):
     project_slug = serializers.CharField(max_length=32)
     agent_identifier = serializers.CharField(max_length=120)
@@ -56,3 +82,23 @@ class SubtaskRequest(serializers.Serializer):
 
 class TaskRefRequest(serializers.Serializer):
     task_id = serializers.UUIDField()
+
+
+class TaskSearchRequest(serializers.Serializer):
+    project_slug = serializers.CharField(max_length=32)
+    q = serializers.CharField(max_length=200, required=False, allow_blank=True, default="")
+    status = StatusListField(required=False, default=list)
+    priority_min = serializers.IntegerField(min_value=0, max_value=100, required=False, allow_null=True, default=None)
+    priority_max = serializers.IntegerField(min_value=0, max_value=100, required=False, allow_null=True, default=None)
+    agent = serializers.CharField(max_length=120, required=False, allow_blank=True, default="")
+    blocked_only = serializers.BooleanField(required=False, default=False)
+    limit = serializers.IntegerField(min_value=1, max_value=100, required=False, default=20)
+    sort = serializers.ChoiceField(
+        choices=["priority", "created", "updated"], required=False, default="priority"
+    )
+
+
+class ClaimLimitRequestCreate(serializers.Serializer):
+    project_slug = serializers.CharField(max_length=32)
+    requested_limit = serializers.IntegerField(min_value=1, max_value=50)
+    reason = serializers.CharField(max_length=4000, required=False, allow_blank=True, default="")

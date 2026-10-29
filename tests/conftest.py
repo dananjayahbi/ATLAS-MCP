@@ -54,3 +54,38 @@ def task(db, project):
         priority=95,
         dod_items=["Repro test written", "Mutex guard added", "Migrations added"],
     )
+
+
+def complete_dod(task, *, agent: str = "Agent-Test") -> None:
+    """Tick every checklist item, as an agent genuinely finishing the work would."""
+    from core.models import ChecklistItem
+    from core.services import tasks as svc
+
+    for item in ChecklistItem.objects.filter(task=task).order_by("order_index"):
+        svc.update_dod_item(
+            task_id=task.pk,
+            item_id=item.order_index,
+            completed=True,
+            agent_identifier=agent,
+        )
+
+
+def drive_to_review(task, *, agent: str = "Agent-Test", patch: str = "--- a\n+++ b\n"):
+    """Take a claimed task all the way to `IN_REVIEW` through the real guards.
+
+    `submit_for_review` now requires both a progress log entry and a 100% DoD,
+    so every test that only cares about the *review* side still has to satisfy
+    those two preconditions here rather than bypassing the transition.
+    """
+    from core.services import tasks as svc
+
+    svc.log_progress(task_id=task.pk, message="working", agent_identifier=agent)
+    complete_dod(task, agent=agent)
+    return svc.submit_for_review(
+        task_id=task.pk,
+        summary_of_work="done",
+        git_patch=patch,
+        verification_log="1 passed",
+        agent_identifier=agent,
+    )
+

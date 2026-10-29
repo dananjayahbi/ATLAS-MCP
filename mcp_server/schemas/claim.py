@@ -50,7 +50,10 @@ CLAIM_RETURNS: dict = {
             },
         },
         "attached_images": {"type": "array", "maxItems": 10, "items": {"type": "string"}},
-        "reason": {"type": "string", "enum": ["NO_ELIGIBLE_TASK"]},
+        "reason": {"type": "string", "enum": ["NO_ELIGIBLE_TASK", "CLAIM_LIMIT_REACHED"]},
+        "claim_limit": {"type": "integer", "minimum": 0, "maximum": 50},
+        "in_progress": {"type": "integer", "minimum": 0},
+        "hint": {"type": "string", "maxLength": 1200},
     },
 }
 
@@ -109,11 +112,16 @@ class ClaimedTaskProjection(BaseModel):
     heartbeat_interval_seconds: int = 120
     definition_of_done: Annotated[list[DodItem], Field(max_length=40)] = []
     attached_images: Annotated[list[str], Field(max_length=10)] = []
-    reason: Literal["NO_ELIGIBLE_TASK"] | None = None
+    reason: Literal["NO_ELIGIBLE_TASK", "CLAIM_LIMIT_REACHED"] | None = None
+    claim_limit: int | None = None
+    in_progress: int | None = None
+    hint: Annotated[str, Field(max_length=1200)] | None = None
 
     def as_body(self) -> dict:
         """Drop the omitted-but-None keys so the wire shape stays exact."""
         body = self.model_dump(exclude_none=True)
         if self.task_id is None:
+            if self.reason == "CLAIM_LIMIT_REACHED":
+                return body
             return {"task_id": None, "reason": self.reason or "NO_ELIGIBLE_TASK"}
         return body

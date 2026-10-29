@@ -6,9 +6,16 @@ from django.db.models import Count
 from rest_framework.response import Response
 
 from api.v1.serializers.project import serialize_project
-from api.v1.views.base import AtlasAPIView, body, optional_str, require_field
+from api.v1.views.base import (
+    AtlasAPIView,
+    body,
+    optional_int,
+    optional_str,
+    require_field,
+)
 from core.errors import InvalidTransition, ProjectNotFound, ValidationError
 from core.models import Project
+from core.services.claim_limits import assert_claim_limit
 from core.services.projects import (
     archive_project,
     create_project,
@@ -65,6 +72,7 @@ class ProjectListView(AtlasAPIView):
             local_repo_path=require_field(payload, "local_repo_path"),
             global_rules_md=optional_str(payload, "global_rules_md", ""),
             accent_color=optional_str(payload, "accent_color", "#00F2FE"),
+            claim_limit=optional_int(payload, "claim_limit"),
         )
         return Response(serialize_project(project), status=201)
 
@@ -82,7 +90,8 @@ class ProjectDetailView(AtlasAPIView):
     def patch(self, request, slug: str):
         project = self._get(slug)
         payload = body(request)
-        editable = {"name", "local_repo_path", "global_rules_md", "accent_color"}
+        editable = {"name", "local_repo_path", "global_rules_md", "accent_color",
+                    "claim_limit"}
         unknown = sorted(set(payload) - editable)
         if unknown:
             raise ValidationError(
@@ -91,6 +100,8 @@ class ProjectDetailView(AtlasAPIView):
             )
         if payload.get("name") is not None and not str(payload["name"]).strip():
             raise ValidationError("name cannot be blank.", detail={"field": "name"})
+        if "claim_limit" in payload:
+            assert_claim_limit(payload["claim_limit"])
         project = update_project(project, **payload)
         return Response(serialize_project(project))
 
