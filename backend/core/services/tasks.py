@@ -8,7 +8,6 @@ guard.
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
 from typing import Any, Iterable
 
 from django.db import transaction
@@ -72,12 +71,25 @@ def would_create_cycle(task: Task, new_blockers: Iterable[Task]) -> bool:
 
 
 def assert_dependencies_satisfiable(task: Task) -> None:
-    """Explicit-intent guard (Doc 01 §8): raises on a REJECTED blocker."""
-    rejected = list(task.blocked_by.filter(status=TaskStatus.REJECTED))
-    if rejected:
+    """Explicit-intent guard (Doc 01 §8): raises on a *dead* blocker.
+
+    "Dead" means a blocker that was rejected **and** never reached 100 % DoD —
+    it can no longer release this task, so accepting the intent would create a
+    row that is permanently unclaimable. A rejected blocker whose work was
+    finished still satisfies the edge (`core.dependencies`), so it is not an
+    error to move on.
+    """
+    from core.dependencies import is_satisfied
+
+    dead = [
+        b
+        for b in task.blocked_by.all()
+        if b.status == TaskStatus.REJECTED and not is_satisfied(b)
+    ]
+    if dead:
         raise DependencyUnsatisfiable(
             "A blocker was rejected and must be requeued or removed first.",
-            detail={"blocker_id": str(rejected[0].pk)},
+            detail={"blocker_id": str(dead[0].pk)},
         )
 
 
@@ -447,6 +459,7 @@ def submit_for_review(
         assigned_agent_id=agent_identifier or task.assigned_agent_id,
         lease_id=None,
         lease_expires_at=None,
+        lease_overdue_at=None,
         last_heartbeat_at=None,
         updated_at=now,
     )
@@ -497,6 +510,7 @@ def reject_review(*, task_id, note: str, actor: str = "human") -> Task:
         submitted_at=None,
         lease_id=None,
         lease_expires_at=None,
+        lease_overdue_at=None,
         updated_at=now,
     )
     task.refresh_from_db()
@@ -754,6 +768,7 @@ def _move_from_completed(
         changes["claimed_at"] = None
         changes["lease_id"] = None
         changes["lease_expires_at"] = None
+        changes["lease_overdue_at"] = None
         changes["submitted_at"] = None
         changes["archived_at"] = None
     elif to == TaskStatus.IN_REVIEW:
@@ -965,13 +980,17 @@ def _assert_priority(value: int) -> None:
 
 
 def _assert_live_lease(task: Task, action: str) -> None:
+    """The lease must still *belong* to the caller; its deadline is advisory.
+
+    Expiry is deliberately not checked: the estimate is the agent's own guess,
+    and a missed guess must not stop it from submitting the work it finished.
+    """
     if task.status != TaskStatus.IN_PROGRESS:
         return
-    expiry = task.lease_expires_at
-    now = utcnow()
-    if expiry is None or expiry + timedelta(seconds=leases.RECLAIM_GRACE_SECONDS) < now:
-        raise InvalidTransition(task.status, action,
-                                "Lease expired; wait for the reclaim sweep.")
+    if not task.lease_id:
+        raise InvalidTransition(
+            task.status, action, "Task holds no lease; re-claim it before submitting."
+        )
 
 
 def _load_blockers(ids: Iterable[str] | None) -> list[Task]:

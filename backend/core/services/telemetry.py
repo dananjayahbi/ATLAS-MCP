@@ -20,15 +20,20 @@ def _age_hours(created_at, now) -> float:
 def priority_matrix(*, project_slug: str | None = None) -> dict:
     """`PriorityMatrixPointDTO[]` (Doc 01 §7.7)."""
     now = utcnow()
+    from core.dependencies import unsatisfied_blocker_qs
+
+    _undone = unsatisfied_blocker_qs()
     qs = (
         Task.objects.filter(archived_at__isnull=True)
         .select_related("project")
         .annotate(
             blocker_count=Count("blocked_by", distinct=True),
             child_count=Count("children", distinct=True),
+            # Progress-based (Doc 01 §7.3): a blocker at 100% DoD is satisfied
+            # no matter which status it sits in.
             unsatisfied_blockers=Count(
                 "blocked_by",
-                filter=~Q(blocked_by__status=TaskStatus.COMPLETED),
+                filter=Q(blocked_by__in=_undone),
                 distinct=True,
             ),
             dod_total=Count("checklist", distinct=True),
@@ -104,6 +109,10 @@ def telemetry_summary() -> dict:
             status=TaskStatus.PENDING_APPROVAL
         ).count(),
         "oldest_pending_age_hours": oldest_hours,
+        # A missed estimate is a nudge, not a failure: the task keeps its agent.
+        "leases_overdue": Task.objects.filter(
+            status=TaskStatus.IN_PROGRESS, lease_overdue_at__isnull=False
+        ).count(),
         "leases_expiring_within_5m": Task.objects.filter(
             status=TaskStatus.IN_PROGRESS,
             lease_expires_at__lte=five_min,

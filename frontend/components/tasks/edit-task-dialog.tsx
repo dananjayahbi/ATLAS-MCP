@@ -349,6 +349,7 @@ export function EditTaskDialog({
                     <label
                       key={candidate.id}
                       className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-chip px-1 py-0.5 hover:bg-inset"
+                      title="Releases this task once the blocker's Definition of Done reaches 100%"
                     >
                       <input
                         type="checkbox"

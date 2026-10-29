@@ -95,7 +95,8 @@ export function SplitAgentWorkbench({
             forceRelease.mutate(
               { id: task.id },
               {
-                onSuccess: () => toast({ level: "info", title: "Lease reclaimed", body: "Task returned to PENDING." }),
+                onSuccess: () =>
+                  toast({ level: "info", title: "Lease cleared", body: "Task returned to PENDING." }),
                 onError: (error) => toast({ level: "warn", title: "Release failed", body: error.message }),
               },
             );

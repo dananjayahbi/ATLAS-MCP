@@ -64,11 +64,16 @@ class HeartbeatView(AtlasAgentView):
         task, remaining = leases.heartbeat(task_id=data["task_id"], lease=data["lease_id"])
         from core.ids import iso_z
 
+        # The deadline is advisory: a heartbeat always succeeds on a lease the
+        # caller still owns, even if it is late. A cleared overdue flag is the
+        # only signal, and it carries no penalty.
         return Response(
             {
                 "ok": True,
                 "lease_expires_at": iso_z(task.lease_expires_at),
                 "seconds_remaining": remaining,
+                "is_overdue": False,
+                "lease_seconds_overdue": 0,
             }
         )
 

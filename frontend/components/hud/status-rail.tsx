@@ -58,6 +58,11 @@ export function StatusRail({ telemetry, className }: StatusRailProps) {
         value={String(telemetry.leases_expiring_within_5m)}
         tone={telemetry.leases_expiring_within_5m > 0 ? "text-critical-hot" : "text-primary"}
       />
+      <Stat
+        label="Leases overdue"
+        value={String(telemetry.leases_overdue)}
+        tone={telemetry.leases_overdue > 0 ? "text-critical-hot" : "text-primary"}
+      />
       <Stat label="24h" value={String(telemetry.throughput_last_24h)} tone="text-success-soft" />
 
       <span className="min-w-0 flex-1" />

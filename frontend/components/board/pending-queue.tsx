@@ -86,7 +86,9 @@ export function PendingQueue({ tasks, projects, loading = false, limit = 12, cla
                       <span aria-hidden className="text-disabled">
                         ·
                       </span>
-                      <span className="shrink-0 text-review-hot">blocked</span>
+                      <span className="shrink-0 text-review-hot" title="A blocker's Definition of Done is below 100%">
+                        blocked
+                      </span>
                     </>
                   ) : null}
                   {task.is_agent_discovered ? (

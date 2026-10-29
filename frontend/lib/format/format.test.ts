@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createRingBuffer, TASK_LOG_MAX_LINES } from "@/lib/sse/ring-buffer";
 import { sanitiseMessage, sanitiseText, clampMessage, MAX_MESSAGE } from "@/lib/sse/sanitise";
-import { formatDuration, formatCountdown, formatAgeHours } from "@/lib/format/duration";
+import { formatDuration, formatCountdown, formatAgeHours, formatOverdue } from "@/lib/format/duration";
 import { basename, shortenPath, shortTaskId } from "@/lib/format/path";
 import { priorityBand, clampPriority } from "@/lib/format/priority";
 import { progressTone, clampPercent } from "@/lib/format/percent";
@@ -82,6 +82,14 @@ describe("formatters", () => {
     expect(formatCountdown(null)).toBeTruthy();
     expect(formatCountdown(0)).toBeTruthy();
     expect(formatCountdown(612)).toMatch(/10/);
+  });
+
+  it("formats overdue seconds against the agent estimate", () => {
+    expect(formatOverdue(3900)).toBe("1h 05m over");
+    expect(formatOverdue(750)).toBe("12m 30s over");
+    expect(formatOverdue(0)).toBe("—");
+    expect(formatOverdue(Number.NaN)).toBe("—");
+    expect(formatOverdue(Number.POSITIVE_INFINITY)).toBe("—");
   });
 
   it("formats age in hours", () => {

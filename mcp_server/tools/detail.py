@@ -21,7 +21,9 @@ LOGGER = logging.getLogger("atlas.mcp.detail")
 NAME = "get_task_details"
 DESCRIPTION = (
     "Re-reads a task with the same token-trimmed projection as claim_next_task without "
-    "leasing it. Use after a stale lease or a review rejection."
+    "leasing it. Use after a stale lease or a review rejection. blocked_by lists the "
+    "dependency ids; a dependency counts as satisfied once its Definition of Done "
+    "reaches 100%, whatever its status."
 )
 
 DETAIL_PARAMS: dict = {
@@ -51,6 +53,9 @@ DETAIL_RETURNS: dict = {
         },
         "local_repo_path": {"type": "string"},
         "project_rules": {"type": "string", "maxLength": 1200},
+        "is_overdue": {"type": "boolean"},
+        "lease_seconds_overdue": {"type": "integer", "minimum": 0},
+        "blocked_by": {"type": "array", "maxItems": 40, "items": {"type": "string"}},
         "definition_of_done": {"type": "array", "maxItems": 40, "items": {"type": "object"}},
         "attached_images": {"type": "array", "maxItems": 10, "items": {"type": "string"}},
         "review_notes": {"type": "string", "maxLength": 2000},

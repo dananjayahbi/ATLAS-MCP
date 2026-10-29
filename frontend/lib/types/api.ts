@@ -58,6 +58,13 @@ export type TaskSummaryDTO = {
   dependency_weight: number;
   assigned_agent_id: string | null;
   lease_seconds_remaining: number | null;
+  /**
+   * Advisory deadline: the task stays IN_PROGRESS and owned by its agent once
+   * the estimate passes — it is only flagged, never returned to PENDING.
+   */
+  is_overdue: boolean;
+  /** Seconds past the agent's own estimate; 0 when not overdue. */
+  lease_seconds_overdue: number;
   /** Set while the task is filed in the archive; cleared by `restore`. */
   archived_at: string | null;
   created_at: string;
@@ -147,6 +154,8 @@ export type TelemetrySummaryDTO = {
   discoveries_pending: number;
   oldest_pending_age_hours: number;
   leases_expiring_within_5m: number;
+  /** IN_PROGRESS tasks past their agent's estimate (still owned, just flagged). */
+  leases_overdue: number;
   throughput_last_24h: number;
   generated_at: string;
 };

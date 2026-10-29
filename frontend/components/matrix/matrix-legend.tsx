@@ -10,7 +10,7 @@ export function MatrixLegend({ note }: { note?: string }) {
           {STATUS_META[status].label}
         </span>
       ))}
-      <span className="inline-flex items-center gap-1">
+      <span className="inline-flex items-center gap-1" title="Blocked — a blocker's Definition of Done is below 100%">
         <span aria-hidden className="size-2 rounded-full border border-critical" />
         blocked
       </span>

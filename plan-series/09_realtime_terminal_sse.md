@@ -586,9 +586,9 @@ renders it with a red left border and it is never replayed (it has no row).
 
 | Producer | Line | `EventType` | Persisted | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| Boot janitor (Doc 03) | `[SYSTEM CRASH DETECTED] lease lea_01JA2… expired; task reset to PENDING` | `task.log` + `task.lease_expired` + `system.recovery` | `TaskEvent` + `execution.log` + audit `SYSTEM_CRASH_DETECTED` | level `ERROR`; the only line that may start with a bracketed tag |
-| Lease reclaim | `[SYSTEM] lease reclaimed by human operator` | `task.status_changed` | `TaskEvent` + audit `LEASE_RECLAIMED` | level `WARN` |
-| Process boot | `[SYSTEM] atlas boot: wal=ok recovered_tasks=2` | `system.boot` | `TaskEvent` (task null) | Channel A only |
+| Overdue sweeper (Doc 03) | `[OVERDUE] estimated completion time passed 300s ago; the agent keeps the task.` | `task.lease_expired` | `TaskEvent` + `execution.log` + audit `TASK_OVERDUE` | level `WARN`; a bracketed tag, but nothing is reset — the agent still owns the task |
+| Human force-release | `[SYSTEM] lease reclaimed by human operator` | `task.status_changed` | `TaskEvent` + audit `LEASE_RECLAIMED` | level `WARN` — the **only** way work leaves an agent |
+| Process boot | `[SYSTEM] atlas boot: wal=ok overdue_tasks=2` | `system.boot` | `TaskEvent` (task null) | Channel A only |
 | Heartbeat | *(not streamed)* | `agent.heartbeat` | not persisted | R2 |
 | Janitor prune | `[SYSTEM] pruned 41 events older than 30 days` | `system.recovery` | `TaskEvent` | level `INFO` |
 
@@ -911,7 +911,7 @@ Expected keys from Doc 06's factory `frontend/lib/api/keys.ts`
 | `task.priority_changed` | `['tasks', slug]`, `['task', taskId]`, `['matrix', slug, *]` | — | |
 | `task.dod_updated` | `['task', taskId]`, `['tasks', slug]` | — | |
 | `task.log` | **none** | terminal ring buffer only | §12 rule — must never refetch |
-| `task.lease_expired` | `['tasks', slug]`, `['task', taskId]`, `['telemetry']` | rail (red) | |
+| `task.lease_expired` | `['tasks', slug]`, `['task', taskId]`, `['telemetry']` | rail (amber) | the OVERDUE badge; the task keeps its agent, so no status refetch is implied |
 | `task.submitted` | `['tasks', slug]`, `['reviews']`, `['telemetry']` | sound cue | |
 | `review.approved` / `review.rejected` | `['tasks', slug]`, `['reviews']`, `['telemetry']`, `['matrix', slug, *]`, `['project', slug]` | sound cue | |
 | `discovery.created` | `['discoveries']`, `['tasks', slug]`, `['telemetry']` | sound cue (amber) | |

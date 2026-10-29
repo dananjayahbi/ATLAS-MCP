@@ -21,8 +21,10 @@ LOGGER = logging.getLogger("atlas.mcp.heartbeat")
 
 NAME = "task_heartbeat"
 DESCRIPTION = (
-    "Extends the lease on a claimed task by another 900 seconds so long-running work "
-    "is not reclaimed mid-task. Call this every heartbeat_interval_seconds."
+    "Reports that the agent is still working and re-estimates the completion time "
+    "(+900 s). Leases are advisory: missing the estimate never reclaims the task, it "
+    "only marks it OVERDUE until the next heartbeat. Call this every "
+    "heartbeat_interval_seconds."
 )
 
 #: ULID-based lease id, Crockford base32, per Doc 01 §5.
@@ -43,6 +45,11 @@ HEARTBEAT_RETURNS: dict = {
         "ok": {"type": "boolean"},
         "lease_expires_at": {"type": "string", "description": "ISO-8601 UTC Z"},
         "seconds_remaining": {"type": "integer"},
+        "is_overdue": {
+            "type": "boolean",
+            "description": "True only if the renewed estimate is already blown.",
+        },
+        "lease_seconds_overdue": {"type": "integer", "minimum": 0},
     },
     "required": ["ok", "lease_expires_at", "seconds_remaining"],
 }

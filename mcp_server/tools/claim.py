@@ -21,7 +21,9 @@ LOGGER = logging.getLogger("atlas.mcp.claim")
 NAME = "claim_next_task"
 DESCRIPTION = (
     "Claims the highest priority available pending task for a specific project. "
-    "Automatically acquires a 15-minute lease."
+    "Returns a 15-minute completion estimate, not a hard deadline: if the estimate "
+    "passes, keep working and call task_heartbeat to re-estimate. A task blocked by "
+    "another only becomes claimable once that blocker's Definition of Done reaches 100%."
 )
 
 

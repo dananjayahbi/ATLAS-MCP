@@ -1,4 +1,4 @@
-# ATLAS-MCP: Autonomous Agentic Orchestrator & Command Center
+﻿# ATLAS-MCP: Autonomous Agentic Orchestrator & Command Center
 ## Master Architectural Blueprint & Implementation Specification
 
 ---
@@ -176,9 +176,9 @@ PRAGMA journal_mode=WAL                   Find status == IN_PROGRESS
 PRAGMA integrity_check                    Where lease_expires_at < NOW
        │                                             │
        ▼                                             ▼
-Clean journal replay; zero locks          Revert task status to PENDING
-                                          Append crash note to audit log
-                                          Wipe orphan assigned_agent_id
+Clean journal replay; zero locks          Flag the task OVERDUE
+                                          Append an [OVERDUE] note to the log
+                                          Leave status / lease / agent intact
 ```
 
 ### 5.1 SQLite WAL Mode & Durability Engine
@@ -186,11 +186,12 @@ Clean journal replay; zero locks          Revert task status to PENDING
 * WAL ensures that even if power cuts in the middle of a transaction, uncommitted frames are safely rolled back on the next process launch without database corruption.
 
 ### 5.2 Atomic Lease-Based Task Allocation
-* No task is ever locked permanently. When an agent claims a task, the server grants a 15-minute lease:
+* No task is ever locked permanently. When an agent claims a task, the server records the agent's **estimated completion time**:
   $$\text{lease\_expires\_at} = t_{\text{current}} + 15\text{ minutes}$$
 * The agent must ping `task_heartbeat(task_id)` every 2 minutes.
-* If a power outage terminates the agent CLI, the lease naturally expires.
-* **Boot-Time Janitor:** On startup, a Django system check scans for expired `IN_PROGRESS` tasks, appends a `[SYSTEM CRASH DETECTED]` entry to `execution.log`, and cleanly returns the task to `PENDING` status.
+* **The estimate is advisory.** An agent is not a fortune teller: exceeding it must never destroy in-flight work. Passing `lease_expires_at` therefore does **not** reclaim the task - it keeps its status, its lease and its agent, and only gains an **OVERDUE** badge (`lease_overdue_at`, plus a derived `lease_seconds_overdue` stopwatch). The next heartbeat clears the badge.
+* **Boot-Time Janitor:** on startup, a Django check scans for `IN_PROGRESS` tasks whose estimate has passed by more than the 60 s grace, stamps them overdue, and appends an `[OVERDUE] ... the agent keeps the task.` entry to `execution.log`. It never returns a task to `PENDING`.
+* **Only a human takes work back** (`force_release`, T11) or a review rejection (T9). A crashed or wedged agent is an operator decision, not a timer decision.
 
 ### 5.3 Atomic Disk File Writes
 * All files, logs, and patches written to `storage/` are buffered into a temporary file (`filename.tmp`).
@@ -206,7 +207,7 @@ The platform implements exactly 12 tightly integrated features:
 2. **Definition of Done (DoD) Checklists:** Structured JSON array of verifiable tasks (e.g., unit test written, documentation updated). Agents mark items off sequentially using discrete tool calls.
 3. **Verification Gates (`submit_for_review`):** The agent cannot set status to `COMPLETED`. It must submit an atomic git patch and test run output, placing the task in `IN_REVIEW` for final human sign-off.
 4. **Subtask Spawning (`spawn_subtask`):** If an agent discovers that a task requires architectural decomposition, it can spawn child subtasks that inherit priority weighting and auto-link to the parent.
-5. **Dependency Blocking (`blocked_by`):** Directed Acyclic Graph (DAG) task engine. Tasks with unsatisfied prerequisites are completely invisible to `claim_next_task` queries.
+5. **Dependency Blocking (`blocked_by`):** Directed Acyclic Graph (DAG) task engine. A task is invisible to `claim_next_task` until every blocker's Definition of Done reaches **100 %** - the blocker's status is irrelevant, so a dependency releases as soon as the upstream work is actually finished, even if the blocker is sitting in `IN_REVIEW` waiting for a human.
 6. **In-App Canvas Annotation:** Full Next.js visual annotation tool (bounding boxes, arrows, text callouts, privacy blurs) built on an HTML5 canvas over uploaded images, exporting flattened high-contrast visual guides for vision models.
 7. **Cyber HUD Visual Theme:** High-density, dark OLED / Tactical SOC interface inspired by command centers and neural network telemetry.
 8. **Split Multi-Agent Dashboard:** Responsive split-pane layout supporting simultaneous side-by-side management of Project ABC and Project XYZ, including independent terminal streams and queues.

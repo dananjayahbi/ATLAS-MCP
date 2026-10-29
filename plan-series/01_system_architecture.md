@@ -413,7 +413,8 @@ class EventType(models.TextChoices):
 | `discovered_by_agent` | varchar(120) | default `""` | `agent_identifier` |
 | `assigned_agent_id` | varchar(120) | null | set on claim, retained after submit |
 | `lease_id` | varchar(32) | null (`lea_` ULID) | null iff not `IN_PROGRESS` |
-| `lease_expires_at` | datetime | null | §11 |
+| `lease_expires_at` | datetime | null | the agent's **completion estimate**, not a cutoff — §11 |
+| `lease_overdue_at` | datetime | null | set when the estimate passes; cleared by the next heartbeat |
 | `last_heartbeat_at` | datetime | null | |
 | `claimed_at` | datetime | null | |
 | `submitted_at` | datetime | null | |
@@ -484,9 +485,11 @@ Allowed `event` values: `PROJECT_CREATED`, `TASK_CREATED`, `TASK_STATUS`, `TASK_
 | :--- | :--- |
 | `dod_progress_percent` | `round(completed_items / total_items * 100)`, `0` when no items |
 | `age_hours` | `(now - created_at) / 3600`, 2 dp |
-| `is_blocked` | `blocked_by.filter(status != COMPLETED).exists()` |
+| `is_blocked` | `blocked_by` contains a task that is not `COMPLETED` **and** whose `dod_progress_percent < 100` |
 | `dependency_weight` | `count(blocked_by) + 0.5 * count(children not COMPLETED)` |
 | `lease_seconds_remaining` | `max(0, lease_expires_at - now)` |
+| `is_overdue` | `status == IN_PROGRESS and lease_overdue_at IS NOT NULL` |
+| `lease_seconds_overdue` | `max(0, now - lease_expires_at)`, else `0` |
 | `project_health_percent` | `round(completed / (completed + pending + in_progress + in_review) * 100)`; `0` if denominator `0` |
 
 ---
@@ -543,6 +546,8 @@ Allowed `event` values: `PROJECT_CREATED`, `TASK_CREATED`, `TASK_STATUS`, `TASK_
   "dependency_weight": 1.5,
   "assigned_agent_id": "Agent-Claude",
   "lease_seconds_remaining": 612,
+  "is_overdue": false,
+  "lease_seconds_overdue": 0,
   "created_at": "2026-10-26T04:40:00.000Z",
   "updated_at": "2026-10-27T08:05:00.000Z"
 }
@@ -648,6 +653,7 @@ Adds:
   "discoveries_pending": 1,
   "oldest_pending_age_hours": 51.2,
   "leases_expiring_within_5m": 0,
+  "leases_overdue": 0,
   "throughput_last_24h": 6,
   "generated_at": "2026-10-27T08:10:11.297Z"
 }
@@ -697,15 +703,15 @@ PENDING_APPROVAL ──approve──▶ PENDING ──claim──▶ IN_PROGRESS
 | T2 | — | `propose_task` (agent) | `PENDING_APPROVAL` | project exists, `discovered_during_task_id` exists, title non-empty | asset rows for screenshots, `discovery.created` |
 | T3 | `PENDING_APPROVAL` | `approve_discovery` | `PENDING` | status is `PENDING_APPROVAL` | `priority = suggested_priority` (or edited value), `discovery.approved` |
 | T4 | `PENDING_APPROVAL` | `reject_discovery` | `REJECTED` | status is `PENDING_APPROVAL` | `discovery.rejected` |
-| T5 | `PENDING` | `claim_next_task` | `IN_PROGRESS` | `is_blocked == false`, `priority >= min_priority`, `project.archived_at IS NULL` | `lease_id`, `lease_expires_at = now+900s`, `attempt_count += 1`, `lease.granted` |
-| T6 | `IN_PROGRESS` | `task_heartbeat` | `IN_PROGRESS` | lease matches `lease_id` **and** not expired | `lease_expires_at = now+900s`, `last_heartbeat_at = now` |
-| T7 | `IN_PROGRESS` | `submit_for_review` | `IN_REVIEW` | lease matches `lease_id` (an expired-but-not-yet-reclaimed lease is accepted with a `STALE_LEASE` warning recorded) | patch + log assets written, lease cleared, `task.submitted` |
+| T5 | `PENDING` | `claim_next_task` | `IN_PROGRESS` | `is_blocked == false`, `priority >= min_priority`, `project.archived_at IS NULL` | `lease_id`, `lease_expires_at = now+900s` (a **completion estimate**), `lease_overdue_at = NULL`, `attempt_count += 1`, `lease.granted` |
+| T6 | `IN_PROGRESS` | `task_heartbeat` | `IN_PROGRESS` | lease matches `lease_id` (an expired estimate is **accepted**) | `lease_expires_at = now+900s`, `lease_overdue_at = NULL`, `last_heartbeat_at = now` |
+| T7 | `IN_PROGRESS` | `submit_for_review` | `IN_REVIEW` | lease matches `lease_id` (an expired estimate is accepted — ownership, not punctuality, gates submission) | patch + log assets written, lease cleared, `task.submitted` |
 | T8 | `IN_REVIEW` | `approve_review` | `COMPLETED` | status is `IN_REVIEW` | `completed_at`, `review.approved`, project counters refresh |
 | T9 | `IN_REVIEW` | `reject_review` | `PENDING` | status is `IN_REVIEW`, `review_notes` non-empty | `lease` cleared, `attempt_count` unchanged, `review.rejected` |
-| T10 | `IN_PROGRESS` | `reclaim_expired` (system) | `PENDING` | `lease_expires_at < now` | `[SYSTEM CRASH DETECTED]` log line, `task.lease_expired`, audit |
+| T10 | `IN_PROGRESS` | `mark_overdue` (system) | `IN_PROGRESS` (**no status change**) | `lease_expires_at < now - grace` and `lease_overdue_at IS NULL` | `lease_overdue_at = now`, `[OVERDUE]` WARN line, `task.lease_expired` event, audit `TASK_OVERDUE`. The task keeps its agent and its lease. |
 | T11 | `IN_PROGRESS` | `force_release` (human) | `PENDING` | operator action | audit `LEASE_RECLAIMED` actor `human` |
 | T12 | `PENDING`/`REJECTED` | `archive_task` | `REJECTED` | operator action | audit only |
-| T13 | `REJECTED` | `requeue_task` (human) | `PENDING` | status is `REJECTED` **and** every `blocked_by` is `COMPLETED` | `review_notes = ""`, `attempt_count` unchanged, audit `TASK_STATUS` actor `human` |
+| T13 | `REJECTED` | `requeue_task` (human) | `PENDING` | status is `REJECTED` **and** no `blocked_by` blocker is a dead end (rejected with `dod_progress_percent < 100`) | `review_notes = ""`, `attempt_count` unchanged, audit `TASK_STATUS` actor `human` |
 | T14 | `PENDING` | `claim_for_agent` (human picks one task) | `IN_PROGRESS` | task is `PENDING`, not blocked, and holds **no** live lease | grants a lease to the named agent, audit `LEASE_GRANTED` actor `human`. If a live lease exists → `409 TASK_ALREADY_LEASED` |
 
 **Illegal transitions** must return `409 INVALID_TRANSITION` with `{"from":…,"action":…}` in `detail`.
@@ -716,9 +722,11 @@ PENDING_APPROVAL ──approve──▶ PENDING ──claim──▶ IN_PROGRESS
 
 **DoD guard:** `submit_for_review` does **not** require 100 % DoD completion, but the response includes `dod_progress_percent` and the UI flags incomplete items in amber. Human sign-off is the only hard gate (Master §6.3).
 
-**Dependency guard:** a task is claimable only when every `blocked_by` task is `COMPLETED`. At **claim-filter** time a task with an unsatisfied or `REJECTED` blocker is **silently skipped** — `claim_next_task` returns the next eligible task, or `{"task_id": null, "reason": "NO_ELIGIBLE_TASK"}`. It never raises, because a queue scan is not a user action and must stay cheap (Master §4.2).
+**Dependency guard:** a task is claimable only when every `blocked_by` blocker has reached **100 % Definition-of-Done progress** — its status is irrelevant. `COMPLETED` short-circuits the predicate (so a verified blocker with no checklist still releases dependents), and a blocker with no checklist items reads as 0 % and therefore never satisfies an edge. At **claim-filter** time a task with an unsatisfied blocker is **silently skipped** — `claim_next_task` returns the next eligible task, or `{"task_id": null, "reason": "NO_ELIGIBLE_TASK"}`. It never raises, because a queue scan is not a user action and must stay cheap (Master §4.2).
 
-`DEPENDENCY_UNSATISFIABLE` is raised only on **explicit intent** operations where a human is acting on one known task: `create_task` / `reopen` with a `REJECTED` blocker in `blocked_by`, and `requeue` (T13) when a blocker was rejected. The operator gets a 409 with the offending blocker in `detail`; the sweeper and claim path never emit it.
+The single implementation is `backend/core/dependencies.py`; the claim filter, the `?blocked=` board filter, `search_tasks` and the priority matrix all read it, so they cannot drift apart.
+
+`DEPENDENCY_UNSATISFIABLE` is raised only on **explicit intent** operations where a human is acting on one known task: `create_task` / `reopen` with a **dead** blocker in `blocked_by`, and `requeue` (T13) when a blocker is rejected *and* never reached 100 % DoD. The operator gets a 409 with the offending blocker in `detail`; the sweeper and claim path never emit it.
 
 ---
 
@@ -853,17 +861,25 @@ with transaction.atomic():
 | I2 | Two concurrent claims never return the same `task_id` (verified with 20 parallel threads, Doc 10 §5.2). |
 | I3 | `IN_PROGRESS` ⇒ exactly one non-null `lease_id`. |
 | I4 | A heartbeat with a stale `lease_id` mutates nothing and returns `409 STALE_LEASE`. |
-| I5 | After boot recovery, zero tasks remain `IN_PROGRESS` with `lease_expires_at < now - 60s`. |
+| I5 | After boot recovery, no task is `IN_PROGRESS` with `lease_expires_at < now - 60s` **and** `lease_overdue_at IS NULL` (i.e. every missed estimate is visible). |
 | I6 | Storage writes are either absent or complete (no zero-byte PNG/patch) — verified by killing the writer mid-write. |
 
 ### 11.2 Lease parameters (frozen)
 
 ```
-LEASE_TTL_SECONDS          = 900      # 15 minutes (Master §5.2)
+LEASE_TTL_SECONDS          = 900      # the agent's completion estimate (Master §5.2)
 HEARTBEAT_INTERVAL_SECONDS = 120      # agents must ping every 2 minutes
-RECLAIM_GRACE_SECONDS      = 60       # boot janitor tolerates clock skew
+RECLAIM_GRACE_SECONDS      = 60       # delay before a blown estimate shows as OVERDUE
 SSE_KEEPALIVE_SECONDS      = 15
 ```
+
+**`LEASE_TTL_SECONDS` is an estimate, not an eviction timer.** Passing it never
+changes a task's status, never clears its lease and never reassigns it: the
+sweeper only stamps `lease_overdue_at` and emits a `WARN`. Only a human
+(T11 force-release, T12 archive) or a review rejection (T9) returns work to the
+queue, so an agent that underestimated its own job keeps the job. This is why
+`RECLAIM_GRACE_SECONDS` now means "how long after the estimate the OVERDUE badge
+appears" rather than "how long until the crash janitor steals the task".
 
 ### 11.3 Event sequencing
 
@@ -885,7 +901,7 @@ SSE_KEEPALIVE_SECONDS      = 15
 | Assets | `POST /api/v1/assets/` (multipart), `GET /api/v1/assets/{id}/content`, `/download` | 04, 07 |
 | Telemetry | `GET /api/v1/telemetry/summary`, `GET /api/v1/priority-matrix?x=age_hours` | 04, 06 |
 | SSE | `GET /api/v1/stream/events?project_slug=`, `GET /api/v1/stream/tasks/{id}/log` | 09 |
-| Health | `GET /healthz` (no auth) → `{status:"ok", db:"wal", recovered_tasks:n}` | 03 |
+| Health | `GET /healthz` (no auth) → `{status:"ok", db:"wal", overdue_tasks:n}` | 03 |
 
 **Transport note:** the browser calls these same-origin; `next.config.ts` rewrites `/api/v1/:path*` → `http://127.0.0.1:8471/api/v1/:path*` and injects `Authorization` server-side. SSE must bypass compression (`compress: false` for the stream route).
 
@@ -1000,7 +1016,7 @@ Fixture rules: values must be realistic (no `"lorem ipsum"`), timestamps must be
 | Doc | Must consume | Must publish |
 | :--- | :--- | :--- |
 | 02 | §4, §5, §6, §7.3–7.4 | model field list, storage API signatures |
-| 03 | §6.4, §8, §11, §15 | `recovery.reclaim_expired_tasks()`, `leases.*` signatures |
+| 03 | §6.4, §8, §11, §15 | `recovery.mark_overdue` wiring, `leases.*` signatures |
 | 04 | §7, §8, §10, §15 | endpoint schemas, serializer field maps |
 | 05 | §2.1 palette (Master), §7.7 | token names, component prop tables |
 | 06 | §7, §12, §16 | component tree, hook signatures, keyboard map |

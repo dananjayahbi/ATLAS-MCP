@@ -81,6 +81,9 @@ export function setStatus(id: string, to: TaskStatus, note: string): TaskDetailD
 
   detail.status = to;
   detail.lease_seconds_remaining = null;
+  // Any status change clears the lease, so the advisory overdue flag resets too.
+  detail.is_overdue = false;
+  detail.lease_seconds_overdue = 0;
   if (to === "IN_PROGRESS") detail.assigned_agent_id = detail.assigned_agent_id ?? "Agent-Manual";
   if (to === "PENDING" || to === "REJECTED") detail.assigned_agent_id = null;
   if (to === "COMPLETED") detail.review_notes = note;

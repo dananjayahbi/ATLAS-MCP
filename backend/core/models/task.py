@@ -46,7 +46,12 @@ class Task(models.Model):
 
     assigned_agent_id = models.CharField(max_length=120, null=True, blank=True)
     lease_id = models.CharField(max_length=32, null=True, blank=True)
+    #: The agent's *estimated* deadline, not a hard cutoff. Passing it only
+    #: marks the row overdue — it never returns the task to `PENDING`.
     lease_expires_at = models.DateTimeField(null=True, blank=True)
+    #: When the deadline was first observed in the past. Set by the sweeper and
+    #: cleared by the next successful heartbeat. This is the overdue stopwatch.
+    lease_overdue_at = models.DateTimeField(null=True, blank=True)
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)
 
     claimed_at = models.DateTimeField(null=True, blank=True)
@@ -76,6 +81,7 @@ class Task(models.Model):
                 name="task_claim_idx",
             ),
             models.Index(fields=["status", "lease_expires_at"], name="task_lease_idx"),
+            models.Index(fields=["lease_overdue_at"], name="task_overdue_idx"),
             models.Index(fields=["project", "status"], name="task_board_idx"),
             models.Index(fields=["archived_at"], name="task_archived_idx"),
         ]
@@ -108,4 +114,12 @@ class Task(models.Model):
         return round(sum(1 for i in items if i.completed) / len(items) * 100)
 
     def is_blocked(self) -> bool:
-        return self.blocked_by.exclude(status=TaskStatus.COMPLETED).exists()
+        """True while any `blocked_by` blocker is under 100 % DoD (see `core.dependencies`).
+
+        A blocker counts as satisfied at 100 % progress *regardless of status*:
+        agents park finished work in `IN_REVIEW`, and waiting for a human to
+        approve it would stall every dependent task.
+        """
+        from core.dependencies import is_blocked as _is_blocked
+
+        return _is_blocked(self)

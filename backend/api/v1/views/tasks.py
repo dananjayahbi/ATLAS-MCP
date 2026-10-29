@@ -296,9 +296,15 @@ def _apply_filters(qs, params):
 
     blocked = _flag(params.get("blocked"))
     if blocked is True:
-        qs = qs.filter(blocked_by__isnull=False).distinct()
+        # Progress-based: a blocker at 100% DoD counts as satisfied, so a task
+        # whose blockers are parked in IN_REVIEW is *not* on the blocked list.
+        from core.dependencies import unsatisfied_blocker_qs
+
+        qs = qs.filter(blocked_by__in=unsatisfied_blocker_qs()).distinct()
     elif blocked is False:
-        qs = qs.filter(blocked_by__isnull=True)
+        from core.dependencies import unsatisfied_blocker_qs
+
+        qs = qs.exclude(blocked_by__in=unsatisfied_blocker_qs())
 
     discovered = _flag(params.get("discovered"))
     if discovered is not None:

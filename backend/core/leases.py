@@ -1,4 +1,4 @@
-"""Lease acquisition, renewal and release (Doc 01 §11, Doc 03 §4).
+"""Lease acquisition, renewal, release and overdue tracking (Doc 01 §11, Doc 03 §4).
 
 Why this is not `select_for_update()`
 -------------------------------------
@@ -14,6 +14,23 @@ Correctness rests on three facts:
    cannot interleave their read-then-write windows.
 2. The `WHERE status='PENDING'` predicate is evaluated by SQLite at write time.
 3. `UPDATE ... RETURNING` lets us read the pre-image while writing atomically.
+
+A lease is a **deadline, not a claim**
+--------------------------------------
+`lease_expires_at` is the agent's own estimate of how long the work will take.
+An agent is not a fortune teller, so missing the estimate must not destroy the
+work in progress — a reclaim would throw away a half-finished task and hand it
+to the next agent, who would restart from zero.
+
+Instead, passing the estimate only marks the task **overdue**:
+
+* `mark_overdue()` stamps `lease_overdue_at` once and emits
+  `task.lease_expired` as a `WARN` line (the operator's cue, not a rollback).
+* The task stays `IN_PROGRESS` and stays claimed by its agent, forever.
+* `heartbeat()` always renews and clears the overdue flag, so a late agent that
+  finishes the job simply reports in and continues.
+
+Only a human can take work away from an agent (`release`, T11).
 """
 
 from __future__ import annotations
@@ -23,7 +40,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from django.conf import settings
-from django.db import connection, transaction
+from django.db import transaction
 from django.db.models import F
 
 from core.audit import audit
@@ -35,6 +52,7 @@ from core.errors import (
     TaskNotFound,
 )
 from core.events import emit
+from core.ids import iso_z
 from core.ids import lease_id as new_lease_id
 from core.ids import utcnow
 from core.models import Asset, ChecklistItem, Project, Task
@@ -42,7 +60,11 @@ from core.models import Asset, ChecklistItem, Project, Task
 logger = logging.getLogger("atlas.leases")
 
 LEASE_TTL_SECONDS = int(getattr(settings, "ATLAS_LEASE_TTL_SECONDS", 900))
+#: How long past the estimate before the row is flagged overdue. Kept under the
+#: historical name so the frozen-constant gate and existing env files keep
+#: working; the semantics are "grace before the overdue badge appears".
 RECLAIM_GRACE_SECONDS = int(getattr(settings, "ATLAS_RECLAIM_GRACE_SECONDS", 60))
+OVERDUE_GRACE_SECONDS = RECLAIM_GRACE_SECONDS
 
 #: A claim that loses the race retries this many times before giving up.
 CLAIM_ATTEMPTS = 3
@@ -103,20 +125,15 @@ def _eligible_candidates(project_id, min_priority: int):
 
     Blocked tasks are skipped **silently** — a queue scan is not a user action.
     """
-    from django.db.models import Exists, OuterRef
+    from core.dependencies import unsatisfied_blocker_qs
 
-    through = Task.blocked_by.through
-    unsatisfied = through.objects.filter(from_task_id=OuterRef("pk")).exclude(
-        to_task__status=TaskStatus.COMPLETED
-    )
     return (
         Task.objects.filter(
             project_id=project_id,
             status=TaskStatus.PENDING,
             priority__gte=min_priority,
         )
-        .annotate(_blocked=Exists(unsatisfied))
-        .filter(_blocked=False)
+        .exclude(blocked_by__in=unsatisfied_blocker_qs())
         .order_by("-priority", "created_at")
         .values_list("pk", flat=True)[:25]
     )
@@ -140,6 +157,7 @@ def _try_claim(task_id, agent_identifier: str) -> ClaimResult | None:
         status=TaskStatus.IN_PROGRESS,
         lease_id=lease,
         lease_expires_at=expires,
+        lease_overdue_at=None,
         assigned_agent_id=agent_identifier,
         claimed_at=now,
         last_heartbeat_at=now,
@@ -290,7 +308,14 @@ def claim_specific_task(
 
 
 def heartbeat(*, task_id, lease: str) -> tuple[Task, int]:
-    """Renew a lease (Doc 01 §8 T6). Returns `(task, seconds_remaining)`."""
+    """Renew a lease (Doc 01 §8 T6). Returns `(task, seconds_remaining)`.
+
+    An expired deadline is **not** a refusal. The lease is a time estimate, and
+    an agent that blows its own estimate still owns the work; the heartbeat is
+    how it says "I am alive, still on it, and here is my new estimate". Renewal
+    also clears `lease_overdue_at`, which is what takes the row off the overdue
+    board.
+    """
     now = utcnow()
     with transaction.atomic():
         try:
@@ -301,33 +326,30 @@ def heartbeat(*, task_id, lease: str) -> tuple[Task, int]:
         if task.status != TaskStatus.IN_PROGRESS:
             raise InvalidTransition(task.status, "heartbeat")
 
-        # A mismatch is a stale lease — mutate nothing (invariant I4).
+        # A mismatch is a stale lease — mutate nothing (invariant I4). This is
+        # the only reason a heartbeat is ever rejected: someone else owns the
+        # row now, so this caller must stop working.
         if not task.lease_id or task.lease_id != lease:
             raise StaleLease(
                 f"lease_id does not match the live lease for task {task.pk}.",
                 detail={"task_id": str(task.pk), "lease_id": lease},
             )
 
-        expiry = task.lease_expires_at
-        grace = timedelta(seconds=RECLAIM_GRACE_SECONDS)
-        if expiry is not None and expiry + grace < now:
-            raise StaleLease(
-                "Lease expired beyond the reclaim grace window.",
-                detail={"task_id": str(task.pk), "lease_expires_at": expiry.isoformat()},
-            )
-
+        was_overdue = task.lease_overdue_at is not None
         new_expiry = now + timedelta(seconds=LEASE_TTL_SECONDS)
         Task.objects.filter(pk=task.pk, lease_id=lease).update(
             lease_expires_at=new_expiry,
+            lease_overdue_at=None,
             last_heartbeat_at=now,
             updated_at=now,
         )
+        task.refresh_from_db()
         audit(
             project=task.project,
             event=AuditEvent.LEASE_RENEWED,
             task_id=task.pk,
             actor=task.assigned_agent_id or "agent",
-            detail={"lease_id": lease},
+            detail={"lease_id": lease, "was_overdue": was_overdue},
         )
         return task, LEASE_TTL_SECONDS
 
@@ -349,6 +371,7 @@ def release(*, task_id, actor: str = "human", reason: str = "force_release") -> 
             status=TaskStatus.PENDING,
             lease_id=None,
             lease_expires_at=None,
+            lease_overdue_at=None,
             assigned_agent_id=None,
             updated_at=now,
         )
@@ -370,63 +393,75 @@ def release(*, task_id, actor: str = "human", reason: str = "force_release") -> 
         return task
 
 
-def reclaim_expired(*, older_than_seconds: int = 0) -> list[Task]:
-    """T10 — system reclaim of expired leases (Doc 03 §5).
+def mark_overdue(*, grace_seconds: int = RECLAIM_GRACE_SECONDS) -> list[Task]:
+    """Flag in-progress tasks whose estimated deadline has passed (Doc 03 §5).
 
-    Returns the tasks reclaimed. Safe to call from a sweeper thread and from
-    the boot janitor concurrently: the `UPDATE ... WHERE lease_expires_at < ?`
-    predicate makes it idempotent.
+    This is the *whole* consequence of a missed estimate: a timestamp and a
+    `WARN` line. The task keeps its agent, its lease and its status — throwing
+    half-finished work back into the queue because an estimate was optimistic
+    is exactly the behaviour this replaced.
+
+    The `UPDATE ... WHERE lease_overdue_at IS NULL` predicate makes the sweep
+    idempotent, so the runtime sweeper and the boot janitor can race freely.
     """
-    from django.db.models import Q
-
     now = utcnow()
-    cutoff = now - timedelta(seconds=older_than_seconds)
-    reclaimed: list[Task] = []
+    cutoff = now - timedelta(seconds=max(0, grace_seconds))
+    marked: list[Task] = []
 
     candidates = list(
         Task.objects.filter(
             status=TaskStatus.IN_PROGRESS,
             lease_expires_at__lt=cutoff,
+            lease_overdue_at__isnull=True,
         )
         .select_related("project")
         .order_by("lease_expires_at")[:200]
     )
     for task in candidates:
-        previous_lease = task.lease_id
         with transaction.atomic():
             updated = Task.objects.filter(
                 pk=task.pk,
                 status=TaskStatus.IN_PROGRESS,
+                lease_overdue_at__isnull=True,
                 lease_expires_at__lt=cutoff,
-            ).update(
-                status=TaskStatus.PENDING,
-                lease_id=None,
-                lease_expires_at=None,
-                assigned_agent_id=None,
-                updated_at=now,
-            )
+            ).update(lease_overdue_at=now, updated_at=now)
             if updated != 1:
                 continue
 
             task.refresh_from_db()
-            reclaimed.append(task)
+            marked.append(task)
+            overdue_seconds = max(
+                0, int((now - task.lease_expires_at).total_seconds())
+            )
             emit(
                 project=task.project,
                 task=task,
                 type=EventType.TASK_LEASE_EXPIRED,
                 level="WARN",
-                message="[SYSTEM CRASH DETECTED] lease expired; task returned to queue",
-                payload={"previous_lease": previous_lease},
+                message=(
+                    f"[OVERDUE] estimated completion time passed "
+                    f"{overdue_seconds}s ago; the agent keeps the task."
+                ),
+                payload={
+                    "lease_id": task.lease_id,
+                    "assigned_agent_id": task.assigned_agent_id,
+                    "lease_expires_at": iso_z(task.lease_expires_at),
+                    "overdue_seconds": overdue_seconds,
+                },
             )
             audit(
                 project=task.project,
-                event=AuditEvent.LEASE_RECLAIMED,
+                event=AuditEvent.TASK_OVERDUE,
                 task_id=task.pk,
                 actor="system",
-                detail={"previous_lease": previous_lease},
+                detail={
+                    "lease_id": task.lease_id,
+                    "lease_expires_at": iso_z(task.lease_expires_at),
+                    "overdue_seconds": overdue_seconds,
+                },
             )
 
-    return reclaimed
+    return marked
 
 
 def clear_lease(task: Task, *, now=None) -> None:
@@ -435,20 +470,38 @@ def clear_lease(task: Task, *, now=None) -> None:
     Task.objects.filter(pk=task.pk).update(
         lease_id=None,
         lease_expires_at=None,
+        lease_overdue_at=None,
         last_heartbeat_at=None,
         updated_at=when,
     )
 
 
 def seconds_remaining(task: Task, *, now=None) -> int:
+    """Seconds until the estimate; `0` once it has passed."""
     if task.lease_expires_at is None:
         return 0
     delta = task.lease_expires_at - (now or utcnow())
     return max(0, int(delta.total_seconds()))
 
 
+def seconds_overdue(task: Task, *, now=None) -> int:
+    """How long the estimate has been blown; `0` while still inside it.
+
+    Deliberately derived from the clock rather than from `lease_overdue_at`, so
+    the overdue stopwatch keeps ticking between sweeper runs.
+    """
+    if task.lease_expires_at is None:
+        return 0
+    delta = (now or utcnow()) - task.lease_expires_at
+    return max(0, int(delta.total_seconds()))
+
+
 def lease_guard(task: Task, lease: str | None, *, action: str) -> None:
-    """Shared precondition for submit/progress/DoD mutations."""
+    """Shared precondition for submit/progress/DoD mutations.
+
+    Expiry is not checked: only *ownership* decides whether an agent may act on
+    its own task. A missed estimate is reported, never enforced.
+    """
     if task.status != TaskStatus.IN_PROGRESS:
         raise InvalidTransition(task.status, action)
     if lease and task.lease_id != lease:
@@ -467,8 +520,9 @@ __all__ = [
     "claim_specific_task",
     "heartbeat",
     "release",
-    "reclaim_expired",
+    "mark_overdue",
     "clear_lease",
     "seconds_remaining",
+    "seconds_overdue",
     "lease_guard",
 ]

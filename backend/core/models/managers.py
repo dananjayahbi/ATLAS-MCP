@@ -29,27 +29,27 @@ class TaskQuerySet(models.QuerySet):
     def claimable(self, *, min_priority: int = 0) -> "TaskQuerySet":
         """The claim filter (Doc 01 §8 T5).
 
-        `is_blocked` is evaluated with an `EXISTS` subquery rather than a Python
-        loop so the queue scan stays a single round trip (master §4.2).
+        `is_blocked` is evaluated as one SQL subquery rather than a Python loop
+        so the queue scan stays a single round trip (master §4.2). The blocker
+        set is `core.dependencies.unsatisfied_blocker_qs()` — progress-based, so
+        a blocker sitting in `IN_REVIEW` at 100 % DoD already releases its
+        dependents.
         """
-        from django.db.models import Exists, OuterRef
+        from core.dependencies import unsatisfied_blocker_qs
 
-        unsatisfied = self.model.blocked_by.through.objects.filter(
-            from_task_id=OuterRef("pk"),
-        ).exclude(
-            to_task__status=TaskStatus.COMPLETED,
-        )
         return (
             self.filter(status=TaskStatus.PENDING, priority__gte=min_priority)
             .filter(archived_at__isnull=True)
             .exclude(project__archived_at__isnull=False)
-            .annotate(_blocked=Exists(unsatisfied))
-            .filter(_blocked=False)
+            .exclude(blocked_by__in=unsatisfied_blocker_qs())
             .order_by("-priority", "created_at")
         )
 
-    def stale_leases(self, cutoff) -> "TaskQuerySet":
-        return self.filter(status=TaskStatus.IN_PROGRESS, lease_expires_at__lt=cutoff)
+    def overdue(self) -> "TaskQuerySet":
+        """In-progress tasks whose estimated deadline has already been flagged."""
+        return self.filter(
+            status=TaskStatus.IN_PROGRESS, lease_overdue_at__isnull=False
+        )
 
     def in_review(self) -> "TaskQuerySet":
         return self.filter(status=TaskStatus.IN_REVIEW).order_by(F("submitted_at").asc(nulls_last=True))

@@ -2,14 +2,13 @@
 
 import dynamic from "next/dynamic";
 import { cn } from "@/lib/format/cn";
-import { formatCountdown } from "@/lib/format/duration";
-import { LEASE_CLASS, leaseTone } from "@/lib/format/tone";
 import type { TaskDetailDTO } from "@/lib/types/api";
 import type { AssetDTO } from "@/lib/types/enums";
 import { Gauge } from "@/components/ui/gauge";
 import { Kbd } from "@/components/ui/kbd";
 import { Button } from "@/components/ui/button";
 import { isImageAsset } from "@/components/tasks/attachment-chips";
+import { LeaseChip } from "@/components/tasks/lease-chip";
 
 /** Doc 06 §7.2 rows 2–5 — DoD, attachments, terminal and action bar of a pane. */
 
@@ -46,14 +45,12 @@ export function AgentPaneBody({
           className="min-w-0 flex-1"
           label="Definition of done"
         />
-        <span
-          className={cn(
-            "shrink-0 font-machine text-hud-micro tabular-nums",
-            LEASE_CLASS[leaseTone(task.lease_seconds_remaining)],
-          )}
-        >
-          ⏱ {formatCountdown(task.lease_seconds_remaining)}
-        </span>
+        <LeaseChip
+          secondsRemaining={task.lease_seconds_remaining}
+          isOverdue={task.is_overdue}
+          secondsOverdue={task.lease_seconds_overdue}
+          className="text-hud-micro"
+        />
       </div>
 
       <div className="flex shrink-0 flex-wrap items-center gap-1 px-2 pb-1">
@@ -104,7 +101,7 @@ export function AgentPaneBody({
           variant="danger"
           onClick={onForceRelease}
           disabled={task.status !== "IN_PROGRESS"}
-          title="Force release (F) — returns the task to PENDING"
+          title="Force release (F) — clears the agent's ownership and returns the task to PENDING"
         >
           Release <Kbd size="xs">F</Kbd>
         </Button>

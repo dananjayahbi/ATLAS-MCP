@@ -205,6 +205,17 @@ def _project_status(raw: Any, default: str) -> str:
     return value if value in TASK_STATUSES else default
 
 
+def _string_list(raw: Any, limit: int) -> list[str]:
+    """Bounded list of short id strings; non-scalar entries are dropped."""
+    out: list[str] = []
+    for entry in take(raw if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)) else None, limit):
+        if isinstance(entry, (str, int)) and not isinstance(entry, bool):
+            text = str(entry)[:64]
+            if text:
+                out.append(text)
+    return out
+
+
 def _project_dod(raw: Any) -> list[dict]:
     items: list[dict] = []
     for item in take(raw if isinstance(raw, Sequence) else None, MAX_DOD_ITEMS):
@@ -317,6 +328,8 @@ def project_claimed_task(
         "heartbeat_interval_seconds": clamp_int(
             raw.get("heartbeat_interval_seconds"), 10, 3600, heartbeat_interval_default
         ),
+        "is_overdue": bool(raw.get("is_overdue")),
+        "lease_seconds_overdue": clamp_int(raw.get("lease_seconds_overdue"), 0, 604_800, 0),
         "definition_of_done": _project_dod(raw.get("definition_of_done")),
         "attached_images": _image_paths(
             raw, long_path_prefix=long_path_prefix, storage_root=storage_root
@@ -358,6 +371,9 @@ def project_task_detail(
         "status": _project_status(raw.get("status"), "PENDING"),
         "local_repo_path": normalize_path(raw.get("local_repo_path"), long_prefix=long_path_prefix),
         "definition_of_done": _project_dod(raw.get("definition_of_done")),
+        "blocked_by": _string_list(raw.get("blocked_by"), 40),
+        "is_overdue": bool(raw.get("is_overdue")),
+        "lease_seconds_overdue": clamp_int(raw.get("lease_seconds_overdue"), 0, 604_800, 0),
         "attached_images": _image_paths(
             raw, long_path_prefix=long_path_prefix, storage_root=storage_root
         ),
@@ -422,6 +438,10 @@ def project_heartbeat(raw: Mapping[str, Any] | None, now: Any = None) -> dict:
             "ok": bool(body.get("ok", True)),
             "lease_expires_at": str(body.get("lease_expires_at") or ""),
             "seconds_remaining": clamp_int(body.get("seconds_remaining"), 0, 86_400, 0),
+            "is_overdue": bool(body.get("is_overdue")),
+            "lease_seconds_overdue": clamp_int(
+                body.get("lease_seconds_overdue"), 0, 604_800, 0
+            ),
         },
         tool="task_heartbeat",
     )

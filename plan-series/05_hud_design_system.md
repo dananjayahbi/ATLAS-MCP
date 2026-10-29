@@ -1,4 +1,4 @@
-# Doc 05 — Tactical Cyber-HUD Design System
+﻿# Doc 05 — Tactical Cyber-HUD Design System
 
 > **Series position:** 05 of 10 · **Owner:** Subagent 5 (Design Engineer)
 > **Parent:** [`master_implementation_plan.md`](./master_implementation_plan.md) §2 (Visual Design System & Command HUD Aesthetic), §6 items 7 & 10, §11 (documents table).
@@ -141,7 +141,7 @@ No frozen value is altered and no new hue family is introduced.
 | `--accent-success` | `emerald-500` | `#10B981` | `COMPLETED`, passing tests |
 | `--accent-success-soft` | `emerald-400` | `#34D399` | Success badge text |
 | `--accent-success-tint` | `emerald-900` | `#04231A` | Success badge bg |
-| `--accent-critical` | `crimson-500` | `#EF4444` | `ERROR`, priority ≥ 90, lease timeout |
+| `--accent-critical` | `crimson-500` | `#EF4444` | `ERROR`, priority ≥ 90, `is_overdue` |
 | `--accent-critical-hot` | `crimson-400` | `#FF5252` | Critical badge text, pulse stroke |
 | `--accent-critical-tint` | `crimson-900` | `#1F0A0F` | Critical badge bg |
 | `--text-primary` | `ice-100` | `#E2E8F0` | Titles, values, prose |
@@ -514,7 +514,9 @@ Boundaries are inclusive at the lower bound: `39→low`, `40→medium`, `69→me
 | Field | Rule |
 | :--- | :--- |
 | `dod_progress_percent` | `< 34` → `--text-secondary`; `34–66` → `--accent-flow`; `>= 67` → `--accent-success`; `100` → success + `✔` |
-| `lease_seconds_remaining` | `> 300` → `--text-machine`; `61–300` → `--accent-review`; `<= 60` → `--accent-critical` + pulse |
+| `lease_seconds_remaining` | `> 300` → `--text-machine`; `61–300` → `--accent-review`; `<= 60` → `--accent-critical` (no pulse — the estimate is advisory, so exhaustion is *not* a failure) |
+| `is_overdue` | `⏱ OVERDUE` chip in `--accent-critical`; `title`/`aria-label` carries `lease_seconds_overdue` ("1h 05m over"). No row recolour, no pulse: the task is still owned and still in progress |
+| `lease_seconds_overdue` | rendered only inside the OVERDUE chip's accessible label and tooltip, never as a bare countdown (a ticking "00:12:30 over" would read as a failure timer) |
 | `health_percent` | `< 40` → critical; `40–74` → review; `>= 75` → success |
 | `age_hours` (status `PENDING`) | `> 48` → `--text-muted` + `STALE` chip in review amber |
 | `is_blocked` | `⛔` chip in review amber, amber left rail, title never dimmed |
@@ -874,7 +876,7 @@ export function HudShell({ topBar, children }: { topBar: ReactNode; children: Re
 | `--duration-gauge` | 150ms | `duration-150` | `PriorityBar` width change |
 | `--ease-hud` | `cubic-bezier(.2,0,0,1)` | `ease-[…]` | Default for all of the above |
 | `--ease-exit` | `cubic-bezier(.4,0,1,1)` | — | Toast exit only |
-| `--pulse-critical` | 2000ms | `animate-hud-pulse` | Priority ≥ 90, `ERROR`, lease ≤ 60s |
+| `--pulse-critical` | 2000ms | `animate-hud-pulse` | Priority ≥ 90, `ERROR` (never a lease — overdue is not a failure) |
 | `--pulse-live` | 1400ms | `animate-hud-live` | `IN_PROGRESS` LED dot |
 
 ```css
@@ -894,7 +896,7 @@ export function HudShell({ topBar, children }: { topBar: ReactNode; children: Re
 
 | Animation | Duration | Trigger | Encodes |
 | :--- | ---: | :--- | :--- |
-| Critical pulse | 2000ms ∞ | `priority >= 90`, `ERROR`, lease ≤ 60s | severity |
+| Critical pulse | 2000ms ∞ | `priority >= 90`, `ERROR` | severity |
 | Live LED dot | 1400ms ∞ | `IN_PROGRESS` | machine liveness |
 | Log append fade | 120ms ×1 | new SSE frame appended | arrival |
 | Toast enter / exit | 180ms / 120ms | new notification | arrival |
@@ -974,7 +976,8 @@ The ring is never removed without an equivalent replacement. A focused element i
 | `LogLevel` | §7.2 hue | Literal level string in the chip |
 | Priority band | §7.3 hue | Numeric value always visible; `LOW/MED/HIGH/CRITICAL` when `showBand` |
 | `is_blocked` | amber rail | `⛔` glyph + `BLOCKED` text |
-| Lease near expiry | crimson | `00:00:47` countdown digits |
+| Lease near expiry | review amber | `00:00:47` countdown digits |
+| Lease **overdue** | crimson | literal `OVERDUE` word + `⏱` glyph; the tooltip carries the elapsed time |
 | Focused panel | cyan brackets | Focus position itself; brackets are redundant |
 | `dod_progress_percent` | §7.4 hue | Segment count + `NN%` |
 | Degraded mode | crimson banner | Error code + message text |
@@ -993,7 +996,8 @@ Gated by `ATLAS_FEATURE_SOUND` (Doc 01 §13, default `1`). Doc 05 owns the *poli
 | :--- | :--- | :--- | :--- |
 | `review.approved` | 120ms two-tone rise (E5→A5), −18 dBFS | **ON** | Positive confirmation of a human gate |
 | `discovery.created` | 180ms soft ping (C6), −20 dBFS | **ON** | The only asynchronous "your attention is needed" |
-| `task.lease_expired` | 200ms low buzz (A3), −16 dBFS | **ON** | A failure must reach a user who looked away |
+| `task.lease_expired` | 200ms low buzz (A3), −16 dBFS | off | Fires when the agent blows its **own estimate**. With reclaim gone this is routine, not a failure, so a sound would train users to ignore it. Visuals only |
+| `task.overdue` (audit) | none | OFF | Same trigger as above; audit-only |
 | `task.submitted` | none | OFF | Frequent; the badge suffices |
 | `task.log` (any level, incl. `ERROR`) | none | OFF | Log volume makes audio unusable |
 | `task.status_changed` (general) | none | OFF | Covered by the specific cases above |
@@ -1092,7 +1096,7 @@ Each item is verifiable by a reviewer reading this doc, or by a rendered Storybo
 | §4 / §4.1 | Owned path prefixes and the import-only rule |
 | §5 | `snake_case` fields, ISO-8601 `Z` timestamps, `_seconds` durations, native path separators |
 | §6.2 | `TaskStatus` (6), `LogLevel` (4), `EventType` (sound triggers) |
-| §6.9 | `dod_progress_percent`, `lease_seconds_remaining`, `is_blocked`, `age_hours`, `health_percent` colour rules |
+| §6.9 | `dod_progress_percent`, `lease_seconds_remaining`, `is_overdue`, `lease_seconds_overdue`, `is_blocked`, `age_hours`, `health_percent` colour rules |
 | §7.3 / §7.4 | `TaskSummaryDTO` / `TaskDetailDTO` feeding rows, gauges, detail panels |
 | §7.6 | `DiscoveryDTO` fields for the triage card |
 | §7.7 | `PriorityMatrixPointDTO.priority` (band), `TelemetrySummaryDTO` (status strip, sparkline) |

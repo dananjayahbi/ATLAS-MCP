@@ -55,6 +55,9 @@ def project_claimed_task(
     remaining = 0
     if task.lease_expires_at is not None:
         remaining = max(0, int((task.lease_expires_at - reference).total_seconds()))
+    overdue = 0
+    if task.lease_overdue_at is not None and task.lease_expires_at is not None:
+        overdue = max(0, int((reference - task.lease_expires_at).total_seconds()))
 
     payload = {
         "task_id": str(task.pk),
@@ -74,6 +77,11 @@ def project_claimed_task(
     }
     if remaining:
         payload["lease_seconds_remaining"] = remaining
+    if task.lease_overdue_at is not None:
+        # A missed estimate is reported so the agent can re-estimate; it is
+        # never a reason to stop working or to lose the task.
+        payload["is_overdue"] = True
+        payload["lease_seconds_overdue"] = overdue
     return enforce_ceiling(payload, task)
 
 
@@ -107,4 +115,10 @@ def project_task_read(task: Task) -> dict:
     payload["review_summary"] = truncate(task.review_summary, 2000)
     payload["review_notes"] = truncate(task.review_notes, 2000)
     payload["attempt_count"] = task.attempt_count
+    # Dependencies belong on the *read* projection, not on the claim payload:
+    # a claimed task is by definition already unblocked, so the ids would only
+    # cost tokens. A read of IN_REVIEW / PENDING work needs them.
+    payload["blocked_by"] = [
+        str(pk) for pk in task.blocked_by.values_list("pk", flat=True)
+    ][:MAX_DOD]
     return enforce_ceiling(payload, task)

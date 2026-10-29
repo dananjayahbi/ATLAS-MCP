@@ -11,6 +11,7 @@ from api.v1.serializers.computed import (
     dependency_weight,
     dod_progress,
     iso,
+    lease_seconds_overdue,
     lease_seconds_remaining,
 )
 from core.models import Task
@@ -28,6 +29,8 @@ class TaskSummarySerializer(serializers.ModelSerializer):
     age_hours = serializers.SerializerMethodField()
     dependency_weight = serializers.SerializerMethodField()
     lease_seconds_remaining = serializers.SerializerMethodField()
+    is_overdue = serializers.SerializerMethodField()
+    lease_seconds_overdue = serializers.SerializerMethodField()
 
     class Meta:
         model = Task
@@ -45,6 +48,8 @@ class TaskSummarySerializer(serializers.ModelSerializer):
             "dependency_weight",
             "assigned_agent_id",
             "lease_seconds_remaining",
+            "is_overdue",
+            "lease_seconds_overdue",
             "archived_at",
             "created_at",
             "updated_at",
@@ -59,8 +64,8 @@ class TaskSummarySerializer(serializers.ModelSerializer):
 
     def get_is_blocked(self, obj: Task) -> bool:
         cached = getattr(obj, "_blocked", None)
-        if cached is not None:
-            return not cached if isinstance(cached, bool) else bool(cached)
+        if isinstance(cached, bool):
+            return cached
         return obj.is_blocked()
 
     def get_parent_task_id(self, obj: Task) -> str | None:
@@ -81,6 +86,19 @@ class TaskSummarySerializer(serializers.ModelSerializer):
         if obj.status != "IN_PROGRESS":
             return None
         return lease_seconds_remaining(obj.lease_expires_at)
+
+    def get_is_overdue(self, obj: Task) -> bool:
+        """True while the agent is past its own estimate and still working.
+
+        The task stays `IN_PROGRESS` and keeps its agent — this flag is the
+        operator's cue, not a state change.
+        """
+        return obj.status == "IN_PROGRESS" and obj.lease_overdue_at is not None
+
+    def get_lease_seconds_overdue(self, obj: Task) -> int:
+        if obj.status != "IN_PROGRESS" or obj.lease_overdue_at is None:
+            return 0
+        return lease_seconds_overdue(obj.lease_expires_at)
 
 
 class TaskDetailSerializer(TaskSummarySerializer):
@@ -154,6 +172,12 @@ def serialize_task_summary(task: Task, *, now=None) -> dict:
             lease_seconds_remaining(task.lease_expires_at, now)
             if task.status == "IN_PROGRESS"
             else None
+        ),
+        "is_overdue": task.status == "IN_PROGRESS" and task.lease_overdue_at is not None,
+        "lease_seconds_overdue": (
+            lease_seconds_overdue(task.lease_expires_at, now)
+            if task.status == "IN_PROGRESS" and task.lease_overdue_at is not None
+            else 0
         ),
         "archived_at": iso(task.archived_at),
         "created_at": iso(task.created_at),

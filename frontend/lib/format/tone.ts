@@ -130,6 +130,21 @@ export const LEASE_CLASS: Record<LeaseTone, string> = {
   critical: "text-critical-hot",
 };
 
+/**
+ * Doc 05 §7.4 — `is_overdue` is advisory: the agent keeps the task, so the
+ * chip is hot without the countdown being taken away.
+ */
+export type OverdueTone = "overdue" | "none";
+
+export function overdueTone(isOverdue: boolean): OverdueTone {
+  return isOverdue ? "overdue" : "none";
+}
+
+export const OVERDUE_CLASS: Record<OverdueTone, string> = {
+  overdue: "text-critical-hot",
+  none: "text-machine",
+};
+
 /** Doc 05 §7.4 — `dod_progress_percent` bands. */
 export function dodTone(percent: number): "secondary" | "flow" | "success" {
   if (percent >= 67) return "success";

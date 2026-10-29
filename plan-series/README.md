@@ -1,4 +1,4 @@
-# ATLAS-MCP — Plan Series Index
+﻿# ATLAS-MCP — Plan Series Index
 
 > **Status:** Series v1.0.0 · authored 2026-10-27
 > **Parent specification:** [`master_implementation_plan.md`](./master_implementation_plan.md)
@@ -136,7 +136,7 @@ Any change requires: a `CONTRACT-CHANGE` note in Doc 01 §20, a version bump, an
 | I2 | No double-claim under concurrency | `test_parallel_claims` — 20 threads, 10 tasks |
 | I3 | `IN_PROGRESS` ⇒ exactly one live lease | `ck_task_lease_invariant` + test |
 | I4 | Stale heartbeat mutates nothing | `test_stale_heartbeat_noop` |
-| I5 | No expired lease survives boot | `test_boot_reclaims_expired` |
+| I5 | A missed estimate never evicts an agent | `test_i5_boot_recovery_flags_overdue_leases_without_reclaiming` |
 | I6 | No partial files after a crash | `scripts/simulate_power_cut.py` |
 | I7 | A committed row always has its file | write-before-commit (Doc 03 §7.1) |
 | I8 | `seq` is gap-free per project | unique `(project, seq)` + replay test |
@@ -189,8 +189,8 @@ Any change requires: a `CONTRACT-CHANGE` note in Doc 01 §20, a version bump, an
 | **Discovery** | An out-of-scope anomaly an agent proposes via `propose_task`; lands in `PENDING_APPROVAL`. |
 | **Triage inbox** | The HUD queue of `PENDING_APPROVAL` discoveries awaiting human approve/reject. |
 | **Review gate** | The `IN_REVIEW` state requiring human sign-off before `COMPLETED`. |
-| **Janitor** | Boot-time recovery routine that reclaims expired leases and repairs folders. |
-| **Sweeper** | Runtime thread that reclaims expired leases every 60 s. |
+| **Janitor** | Boot-time routine that flags leases whose estimate passed as OVERDUE and repairs folders. It never returns a task to `PENDING`. |
+| **Sweeper** | Runtime thread that flags overdue leases every 60 s. Advisory only — a human takes work back (`T11`). |
 | **Projection** | The token-trimmed view of a task that is safe to send to an agent. |
 | **Containment** | The path check that forces every agent-supplied path inside `ATLAS_STORAGE_ROOT`. |
 | **Pane** | One of the 1–4 split workspaces in the HUD workbench. |

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 
 import pytest
 from django.test import Client
@@ -145,6 +146,8 @@ def test_task_detail_dto_shape(client, task):
         "priority",
         "dod_progress_percent",
         "is_blocked",
+        "is_overdue",
+        "lease_seconds_overdue",
         "definition_of_done",
         "assets",
         "recent_events",
@@ -152,6 +155,44 @@ def test_task_detail_dto_shape(client, task):
     ):
         assert key in body, key
     assert body["definition_of_done"][0]["id"] == 1
+    assert body["is_overdue"] is False
+    assert body["lease_seconds_overdue"] == 0
+
+
+def test_overdue_task_reports_the_flag_and_the_stopwatch(client, task):
+    """A missed estimate is visible on the DTO without changing the status."""
+    from core import leases
+    from core.ids import utcnow
+    from core.models import Task
+
+    leases.claim_next_task(project_slug="alpha", agent_identifier="Agent-X")
+    Task.objects.filter(pk=task.pk).update(
+        lease_expires_at=utcnow() - timedelta(seconds=600)
+    )
+    leases.mark_overdue(grace_seconds=0)
+
+    body = _get(client, f"/api/v1/tasks/{task.pk}/").json()
+    assert body["status"] == "IN_PROGRESS", "the agent keeps the task"
+    assert body["assigned_agent_id"] == "Agent-X"
+    assert body["is_overdue"] is True
+    assert body["lease_seconds_overdue"] >= 600
+    assert body["lease_seconds_remaining"] == 0
+
+
+def test_telemetry_reports_overdue_leases(client, task):
+    from core import leases
+    from core.ids import utcnow
+    from core.models import Task
+
+    leases.claim_next_task(project_slug="alpha", agent_identifier="Agent-X")
+    Task.objects.filter(pk=task.pk).update(
+        lease_expires_at=utcnow() - timedelta(seconds=900)
+    )
+    leases.mark_overdue(grace_seconds=0)
+
+    body = _get(client, "/api/v1/telemetry/summary").json()
+    assert body["leases_overdue"] == 1
+    assert body["leases_expiring_within_5m"] == 0
 
 
 def test_priority_patch(client, task):

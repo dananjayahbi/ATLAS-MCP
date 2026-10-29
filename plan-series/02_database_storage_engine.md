@@ -1,4 +1,4 @@
-# Doc 02 — Database Models & Storage File Router
+﻿# Doc 02 — Database Models & Storage File Router
 
 > **Series position:** 02 of 10 · **Owner:** Subagent 2 (Backend Engine)
 > **Consumes:** Doc 01 §4 (tree), §5 (naming), §6 (data model), §7.3–7.4 (DTOs), §11 (atomicity), §15 (errors)
@@ -46,7 +46,7 @@ backend/core/
 │   ├── checklist.py
 │   ├── asset.py
 │   ├── event.py
-│   └── managers.py          # TaskQuerySet: eligible_for_claim(), for_project(), with_counts()
+│   └── managers.py          # TaskQuerySet: claimable(), overdue(), for_project()
 ├── migrations/
 ├── storage.py               # StorageRouter: paths + atomic writes
 ├── paths.py                 # containment validation (shared with Doc 08)
@@ -340,26 +340,31 @@ class TaskEvent(models.Model):
 ```python
 # backend/core/models/managers.py
 class TaskQuerySet(models.QuerySet):
-    def for_project(self, slug: str) -> "TaskQuerySet":
-        return self.filter(project__slug=slug)
+    def for_project(self, project_id) -> "TaskQuerySet":
+        return self.filter(project_id=project_id)
 
-    def eligible_for_claim(self, min_priority: int = 0) -> "TaskQuerySet":
-        from core.enums import TaskStatus
-        return (self.filter(project__archived_at__isnull=True,
-                            status=TaskStatus.PENDING,
-                            priority__gte=min_priority)
-                    .exclude(blocked_by__status__in=[TaskStatus.PENDING,
-                                                     TaskStatus.IN_PROGRESS,
-                                                     TaskStatus.IN_REVIEW,
-                                                     TaskStatus.PENDING_APPROVAL])
+    def claimable(self, *, min_priority: int = 0) -> "TaskQuerySet":
+        from core.dependencies import unsatisfied_blocker_qs
+        return (self.filter(status=TaskStatus.PENDING, priority__gte=min_priority)
+                    .filter(archived_at__isnull=True)
+                    .exclude(project__archived_at__isnull=False)
+                    .exclude(blocked_by__in=unsatisfied_blocker_qs())
                     .order_by("-priority", "created_at"))
 
-    def leased_expired(self, now) -> "TaskQuerySet":
-        from core.enums import TaskStatus
-        return self.filter(status=TaskStatus.IN_PROGRESS, lease_expires_at__lt=now)
+    def overdue(self) -> "TaskQuerySet":
+        return self.filter(status=TaskStatus.IN_PROGRESS, lease_overdue_at__isnull=False)
 ```
 
-`eligible_for_claim` encodes the DAG rule from Doc 01 §8 (`blocked_by` must be `COMPLETED`); `.exclude(...__in=[non-completed])` implements "every prerequisite completed" without an N+1 loop.
+`claimable()` encodes the DAG rule from Doc 01 §8. The blocker set is
+**not** "status != COMPLETED" — it is
+`core.dependencies.unsatisfied_blocker_qs()`, i.e. "blocker is not `COMPLETED`
+**and** its DoD is below 100 %". `.exclude(blocked_by__in=…)` implements "every
+prerequisite satisfied" without an N+1 loop, and it means a blocker parked in
+`IN_REVIEW` at 100 % already releases its dependents — which is what breaks the
+old deadlock where agents only ever reach `IN_REVIEW`.
+
+`overdue()` is the read side of the overdue flag. It is a *filter*, never a
+mutation: nothing in the manager ever returns a task to `PENDING`.
 
 ---
 
@@ -669,7 +674,7 @@ Rule: a request handler may execute **at most 6** queries for list views and **a
 | `test_checklist_unique_order` | duplicate `order_index` on same task raises |
 | `test_event_seq_unique` | duplicate `(project, seq)` raises |
 | `test_acyclic_rejects_cycle` | A→B→A raises `DependencyCycle` |
-| `test_eligible_for_claim_skips_blocked` | blocked task absent from queryset |
+| `test_claimable_skips_blocked` | blocked task absent from queryset |
 | `test_atomic_write_no_partial` | simulated exception mid-write leaves destination byte-identical to before |
 | `test_containment_rejects_escape` | `../../etc/passwd` raises `PathOutOfScope` |
 | `test_asset_dedupe_by_sha` | second identical upload returns the same row |
@@ -697,8 +702,8 @@ Full harness, fixtures and CI wiring live in Doc 10.
 
 | Direction | Item |
 | :--- | :--- |
-| **Publishes → Doc 03** | `Task.objects.leased_expired(now)`, `StorageRouter.prune_orphans()`, `audit.record()` |
-| **Publishes → Doc 04** | Model field names for serializers, `TaskQuerySet.eligible_for_claim`, `services.tasks.transition` |
+| **Publishes → Doc 03** | `Task.objects.overdue()`, `StorageRouter.prune_orphans()`, `audit.record()` |
+| **Publishes → Doc 04** | Model field names for serializers, `TaskQuerySet.claimable`, `services.tasks.transition` |
 | **Publishes → Doc 08** | `to_relative()` / `to_absolute()` for path derivation, `ensure_within_root()` |
 | **Publishes → Doc 10** | Fixture factory signatures, constraint names for negative tests |
 | **Consumes from Doc 01** | §4 tree, §5 naming, §6 fields/enums, §11 atomicity, §15 error codes |

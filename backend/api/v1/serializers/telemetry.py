@@ -35,6 +35,7 @@ class TelemetrySummarySerializer(serializers.Serializer):
     tasks_by_status = serializers.DictField(child=serializers.IntegerField())
     discoveries_pending = serializers.IntegerField()
     oldest_pending_age_hours = serializers.FloatField()
+    leases_overdue = serializers.IntegerField()
     leases_expiring_within_5m = serializers.IntegerField()
     throughput_last_24h = serializers.IntegerField()
     generated_at = serializers.CharField()

@@ -203,7 +203,7 @@ export function WorkspaceRail({
         Archived work →
       </Link>
       <p className="shrink-0 px-0.5 text-hud-micro uppercase tracking-[0.06em] text-disabled">
-        Lease TTL {formatDuration(900)} · heartbeat 120s
+        Lease estimate {formatDuration(900)} · heartbeat 120s · advisory, not a cutoff
       </p>
     </nav>
   );

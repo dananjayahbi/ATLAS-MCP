@@ -2,15 +2,16 @@
 
 import Link from "next/link";
 import { cn } from "@/lib/format/cn";
-import { formatAgeHours, formatCountdown, formatDuration } from "@/lib/format/duration";
+import { formatAgeHours } from "@/lib/format/duration";
 import { formatPriority } from "@/lib/format/priority";
-import { LEASE_CLASS, leaseTone, STATUS_META } from "@/lib/format/tone";
+import { STATUS_META } from "@/lib/format/tone";
 import type { AssetPreview } from "@/lib/api/assets";
 import type { TaskSummaryDTO } from "@/lib/types/api";
 import { Badge, PriorityChip, StatusBadge } from "@/components/ui/badge";
 import { Gauge } from "@/components/ui/gauge";
 import { TaskThumbnailGrid } from "@/components/tasks/task-thumbnail-grid";
 import { TaskActionsMenu } from "@/components/tasks/task-actions-menu";
+import { LeaseChip } from "@/components/tasks/lease-chip";
 
 /** Doc 06 §8.1 — one task row/card over `TaskSummaryDTO`. Never re-derives aggregates. */
 
@@ -46,7 +47,7 @@ function ChipRow({ task }: { task: TaskSummaryDTO }) {
   return (
     <div className="flex flex-wrap items-center gap-1">
       {task.is_blocked ? (
-        <Badge tone="review" title="Blocked">
+        <Badge tone="review" title="Blocked — a blocker's Definition of Done is below 100%">
           <span aria-hidden>⛔</span>BLOCKED
         </Badge>
       ) : null}
@@ -80,7 +81,6 @@ export function TaskCard({
   busy = false,
   draggable = false,
 }: TaskCardProps) {
-  const lease = formatCountdown(task.lease_seconds_remaining);
   const hrefTo = href ?? `/projects/${task.project_slug}/tasks/${task.id}`;
 
   return (
@@ -118,16 +118,14 @@ export function TaskCard({
             <PriorityChip priority={task.priority} />
             <StatusBadge status={task.status} />
             {task.archived_at !== null ? <Badge tone="neutral">ARCHIVED</Badge> : null}
-            {task.lease_seconds_remaining !== null ? (
-              <span
-                className={cn(
-                  "shrink-0 font-machine text-hud-micro tabular-nums",
-                  LEASE_CLASS[leaseTone(task.lease_seconds_remaining)],
-                )}
-                title={`Lease ${formatDuration(task.lease_seconds_remaining)} remaining`}
-              >
-                ⏱ {lease}
-              </span>
+            {task.lease_seconds_remaining !== null || task.is_overdue ? (
+              <LeaseChip
+                secondsRemaining={task.lease_seconds_remaining}
+                isOverdue={task.is_overdue}
+                secondsOverdue={task.lease_seconds_overdue}
+                hideWhenIdle
+                className="text-hud-micro"
+              />
             ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-1">

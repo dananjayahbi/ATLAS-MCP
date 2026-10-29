@@ -27,6 +27,12 @@ export function formatCountdown(secondsRemaining: number | null): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+/** `1h 05m over`, `12m 30s over`; `—` for non-finite or non-positive values. */
+export function formatOverdue(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "—";
+  return `${formatDuration(seconds)} over`;
+}
+
 /** `12m ago`, `3h ago`, `4d ago`. Stable at boundaries (doc 06 checklist #2). */
 export function formatRelativeTime(iso: string | null, now: number = Date.now()): string {
   if (!iso) return "—";

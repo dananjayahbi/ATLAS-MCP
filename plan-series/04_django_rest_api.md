@@ -1,4 +1,4 @@
-# Doc 04 — Django Core REST & Triage API
+﻿# Doc 04 — Django Core REST & Triage API
 
 > **Series position:** 04 of 10 · **Owner:** Subagent 4 (API Developer)
 > **Consumes:** Doc 01 §7 (DTOs), §8 (transitions), §10 (internal RPC), §12 (route index), §15 (errors); Doc 02 (models, storage); Doc 03 (leases)
@@ -165,7 +165,7 @@ Cursor-based, opaque base64 of `(created_at_iso, id)`. Default 50, max 200. Enve
 | Serializer | DTO | Notes |
 | :--- | :--- | :--- |
 | `ProjectSerializer` | §7.2 `ProjectDTO` | `counters` computed via `annotate`; `active_agent_id` from the newest `IN_PROGRESS` task; `last_event_at` from `Max(events.created_at)` |
-| `TaskSummarySerializer` | §7.3 | `dod_progress_percent`, `is_blocked`, `dependency_weight`, `lease_seconds_remaining` computed |
+| `TaskSummarySerializer` | §7.3 | `dod_progress_percent`, `is_blocked`, `dependency_weight`, `lease_seconds_remaining`, `is_overdue`, `lease_seconds_overdue` computed |
 | `TaskDetailSerializer` | §7.4 | adds DoD, assets, recent events (≤ 50) |
 | `ChecklistItemSerializer` | §7.4 `definition_of_done[]` | **`id` = `order_index`** |
 | `AssetSerializer` | §7.4 `assets[]` | `absolute_path` + `url` derived, never stored |
@@ -188,11 +188,27 @@ def get_lease_seconds_remaining(self, obj) -> int:
         return 0
     return max(0, int((obj.lease_expires_at - timezone.now()).total_seconds()))
 
+def get_is_overdue(self, obj) -> bool:
+    return obj.lease_overdue_at is not None
+
+def get_lease_seconds_overdue(self, obj) -> int:
+    # derived from the clock, not from lease_overdue_at, so the stopwatch keeps
+    # counting in the gap between the estimate passing and the 60 s sweeper run
+    if not obj.lease_expires_at:
+        return 0
+    return max(0, int((timezone.now() - obj.lease_expires_at).total_seconds()))
+
 def get_dependency_weight(self, obj) -> float:
     return float(obj.blocked_by_count) + 0.5 * float(obj.open_children_count)
 ```
 
 `dod_total`, `dod_done`, `blocked_by_count`, `open_children_count` come from queryset annotations (Doc 02 §13), so list endpoints stay within the 6-query budget.
+
+`lease_seconds_remaining` and `lease_seconds_overdue` are **complements**: at most
+one of them is non-zero. Neither is an eviction timer — a client that renders
+`lease_seconds_remaining == 0` as "task failed" is wrong; it must render
+`is_overdue`/`lease_seconds_overdue` as an amber stopwatch and leave the status
+alone.
 
 ---
 
@@ -212,7 +228,7 @@ at once; `0` = unlimited) and `claim_slots_used` (how many it currently holds).
 `PATCH` validates `claim_limit` as an integer `0..50`. Only this route changes the
 ceiling — an agent asking for more goes through §5.10.
 
-Archiving a project hides it from `claim_next_task` (Doc 02 `eligible_for_claim` filters `archived_at__isnull=True`) **and** from `claim_specific_task` (T14) — otherwise `claim-for-agent` would be a hole in the archive. Everything stays readable, and `restore` clears `archived_at`.
+Archiving a project hides it from `claim_next_task` (Doc 02 `claimable` filters `archived_at__isnull=True`) **and** from `claim_specific_task` (T14) — otherwise `claim-for-agent` would be a hole in the archive. Everything stays readable, and `restore` clears `archived_at`.
 
 ### 5.2 Tasks — create & list
 
@@ -276,7 +292,7 @@ would orphan an agent's work and its storage. Anything further along returns
 | Endpoint | Guard | Effect |
 | :--- | :--- | :--- |
 | `force-release` | `status == IN_PROGRESS` | `leases.force_release(actor="human")` → `PENDING`; audit `LEASE_RECLAIMED` |
-| `requeue` | `status == REJECTED` and every `blocked_by` is `COMPLETED` | → `PENDING`, clears `review_notes`, `attempt_count` unchanged. A `REJECTED` blocker → `409 DEPENDENCY_UNSATISFIABLE` with the blocker in `detail` |
+| `requeue` | `status == REJECTED` and every blocker is **satisfied** (100 % DoD) | → `PENDING`, clears `review_notes`, `attempt_count` unchanged. A blocker that is `REJECTED` **and** below 100 % DoD → `409 DEPENDENCY_UNSATISFIABLE` with the blocker in `detail` (a rejected-but-90 %-done blocker is still recoverable, so it does not block) |
 | `claim-for-agent` | `status == PENDING`, not blocked, no live lease | Grants a lease to `{agent_identifier}` (T14), audit `LEASE_GRANTED` actor `human`. A live lease → `409 TASK_ALREADY_LEASED` (the **only** emitter of that code) |
 
 Both return the refreshed `TaskDetailDTO`. None is exposed to agents.
@@ -408,7 +424,7 @@ class InternalBase(APIView):
 | Route | Request | Response | Errors |
 | :--- | :--- | :--- | :--- |
 | `/claim` | `{project_slug, agent_identifier, min_priority?}` | §9.2 projection or `{task_id:null, reason:"NO_ELIGIBLE_TASK"}` | 404 `PROJECT_NOT_FOUND`, 502 `BACKEND_UNAVAILABLE` |
-| `/heartbeat` | `{task_id, lease_id}` | `{ok:true, lease_expires_at}` | 409 `STALE_LEASE` |
+| `/heartbeat` | `{task_id, lease_id}` | `{ok:true, lease_expires_at, is_overdue:false, lease_seconds_overdue:0}` | 409 `STALE_LEASE` — **only** for a `lease_id` mismatch; a blown estimate still returns `200` |
 | `/progress` | `{task_id, message, level?}` | `{ok:true}` (exactly) | 404 `TASK_NOT_FOUND` |
 | `/dod` | `{task_id, item_id, completed}` | `{ok:true, dod_progress_percent}` | 404, 409 `INVALID_TRANSITION` |
 | `/submit` | `{task_id, summary_of_work, git_patch, verification_log?}` | `{ok:true, status:"IN_REVIEW", dod_progress_percent}` | 409 `STALE_LEASE`, 409 `INVALID_TRANSITION`, 413, 507 |

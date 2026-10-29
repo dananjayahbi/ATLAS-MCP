@@ -109,14 +109,9 @@ def apply_task_filters(
         qs = qs.filter(assigned_agent_id=agent_name)
 
     if blocked_only:
-        from django.db.models import Exists, OuterRef
+        from core.dependencies import unsatisfied_blocker_qs
 
-        from core.enums import TaskStatus
-
-        unsatisfied = Task.blocked_by.through.objects.filter(
-            from_task_id=OuterRef("pk")
-        ).exclude(to_task__status=TaskStatus.COMPLETED)
-        qs = qs.annotate(_search_blocked=Exists(unsatisfied)).filter(_search_blocked=True)
+        qs = qs.filter(blocked_by__in=unsatisfied_blocker_qs()).distinct()
 
     return qs
 

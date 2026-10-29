@@ -36,6 +36,8 @@ CLAIM_RETURNS: dict = {
         "lease_id": {"type": "string"},
         "lease_ttl_seconds": {"type": "integer"},
         "heartbeat_interval_seconds": {"type": "integer"},
+        "is_overdue": {"type": "boolean"},
+        "lease_seconds_overdue": {"type": "integer", "minimum": 0},
         "definition_of_done": {
             "type": "array",
             "maxItems": 40,
@@ -110,6 +112,8 @@ class ClaimedTaskProjection(BaseModel):
     lease_id: str = ""
     lease_ttl_seconds: int = 900
     heartbeat_interval_seconds: int = 120
+    is_overdue: bool = False
+    lease_seconds_overdue: int = 0
     definition_of_done: Annotated[list[DodItem], Field(max_length=40)] = []
     attached_images: Annotated[list[str], Field(max_length=10)] = []
     reason: Literal["NO_ELIGIBLE_TASK", "CLAIM_LIMIT_REACHED"] | None = None

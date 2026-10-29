@@ -1,12 +1,13 @@
 "use client";
 
 import { cn } from "@/lib/format/cn";
-import { formatDuration, formatRelativeTime, formatCountdown } from "@/lib/format/duration";
+import { formatDuration, formatRelativeTime } from "@/lib/format/duration";
 import { middlePath, shortTaskId } from "@/lib/format/path";
-import { LEASE_CLASS, leaseTone, STATUS_META } from "@/lib/format/tone";
+import { STATUS_META } from "@/lib/format/tone";
 import type { TaskDetailDTO } from "@/lib/types/api";
 import { Badge } from "@/components/ui/badge";
 import { MachineText } from "@/components/ui/machine-text";
+import { LeaseChip } from "@/components/tasks/lease-chip";
 
 /** Doc 06 §7.2 row 1 + the meta rail under the title. */
 
@@ -41,9 +42,11 @@ export function TaskMeta({ task, className }: TaskMetaProps) {
       <Field label="Attempts">{task.attempt_count}</Field>
       <Field label="Dependency weight">{task.dependency_weight}</Field>
       <Field label="Lease">
-        <span className={LEASE_CLASS[leaseTone(task.lease_seconds_remaining)]}>
-          {task.lease_seconds_remaining === null ? "—" : formatCountdown(task.lease_seconds_remaining)}
-        </span>
+        <LeaseChip
+          secondsRemaining={task.lease_seconds_remaining}
+          isOverdue={task.is_overdue}
+          secondsOverdue={task.lease_seconds_overdue}
+        />
       </Field>
       <Field label="Created">
         <time dateTime={task.created_at} title={task.created_at}>

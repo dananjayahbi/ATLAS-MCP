@@ -1,4 +1,4 @@
-# Doc 06 — Next.js Dual Split-Board Command Dashboard
+﻿# Doc 06 — Next.js Dual Split-Board Command Dashboard
 
 > **Series position:** 06 of 10 · **Owner:** Subagent 6 (Frontend Core)
 > **Consumes:** [`01_system_architecture.md`](./01_system_architecture.md) §7 (DTOs), §8 (transitions), §12 (REST index), §14 (security), §16 (mock fixtures); [`master_implementation_plan.md`](./master_implementation_plan.md) §2 (HUD wireframe), §6 items 8/10/11/12, §11 (ownership).
@@ -230,9 +230,9 @@ Exactly **two** mutations are optimistic in the network sense: priority and DoD.
 | `PROJECT_NOT_FOUND` / `TASK_NOT_FOUND` / `ASSET_NOT_FOUND` | 404 | warn | `{entity} no longer exists` | invalidate parent list |
 | `INVALID_TRANSITION` | 409 | warn | `Cannot {detail.action} from {detail.from} — refreshing` | invalidate detail + board |
 | `TASK_ALREADY_LEASED` | 409 | warn | `Leased by {detail.assigned_agent_id}` + **Force release** action | no retry |
-| `STALE_LEASE` | 409 | info | `Lease expired — refreshing` | `staleTime = 0` refetch |
+| `STALE_LEASE` | 409 | info | `Lease no longer yours — refreshing` | `staleTime = 0` refetch. Fires only on a `lease_id` mismatch (human release, review reject); a blown estimate is **not** an error |
 | `DEPENDENCY_CYCLE` | 409 | error | `Dependency cycle rejected` | no retry |
-| `DEPENDENCY_UNSATISFIABLE` | 409 | warn | `Blocker is REJECTED; task is unclaimable` | invalidate board |
+| `DEPENDENCY_UNSATISFIABLE` | 409 | warn | `Blocker is REJECTED and unfinished; task is unclaimable` | invalidate board |
 | `PAYLOAD_TOO_LARGE` | 413 | error | `Patch exceeds 5 MB` | no retry |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | error | `Only PNG/JPEG/WebP/MD/TXT allowed` | no retry |
 | `RATE_LIMITED` | 429 | info | `Throttled — retrying` | auto retry once after `retry-after` |
@@ -438,8 +438,8 @@ The core surface (master §2, capability 8). One to six independently-scrolling 
 │ TASK-104  Fix JWT expiry race condition  P95 IN_PROGRESS │ │ TASK-201  Rebuild settings drawer    P60 IN_REVIEW      │
 │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░  66%  DoD 2/3  ⏱ lease 612s   │ │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  100%  DoD 3/3  ⏱ —          │
 │ [screenshot_annotated_v2.png ×] [context.md ×]           │ │ [canvas_mockup.png ×] [git_patch.patch ×]               │
+│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░  66%  DoD 2/3  ⏱ 00:10:12      │ │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  100%  DoD 3/3  ⏱ —          │
 │ ┌ LIVE AGENT LOG ────────────────────────── ● STREAMING┐ │ │ ┌ LIVE AGENT LOG ────────────────────────── ○ CLOSED ┐ │
-│ │ > claims lease #lea_01JA2Y (valid 15m)             ▲│ │ │ │ > inspecting DOM tree via selector .drawer       ▲│ │
 │ │ > running: pytest tests/auth/ -k "race"            █│ │ │ │ > subtask spawned: #201.1 (Tokens)               █│ │
 │ │ > 3 passed, 1 failed                               ░│ │ │ │ > diff created: 4 files, +212 -78                ░│ │
 │ └─────────────────────────────────────────────────────┘ │ │ └───────────────────────────────────────────────────┘ │
@@ -452,7 +452,7 @@ The core surface (master §2, capability 8). One to six independently-scrolling 
 | Row | Content | Source | Behaviour |
 | :--- | :--- | :--- | :--- |
 | 1 · Header | `TASK-{shortId}`, title, `PriorityBar` + numeric, `StatusBadge` | `TaskSummaryDTO` | Title truncates with `title` attr; `P` opens the priority slider (§12.1 #39) |
-| 2 · DoD | `SegmentedGauge` + `n/m` + lease countdown | `TaskDetailDTO.definition_of_done`, `lease_seconds_remaining` | Gauge blocks are read-only here, interactive in the review gate |
+| 2 · DoD | `SegmentedGauge` + `n/m` + `LeaseChip` | `TaskDetailDTO.definition_of_done`, `lease_seconds_remaining`, `is_overdue`, `lease_seconds_overdue` | Gauge blocks are read-only here, interactive in the review gate. The chip shows the countdown, or `⏱ OVERDUE` when `is_overdue` — the tile stays `IN_PROGRESS` and the agent is never implied to have lost the task |
 | 3 · Attachments | Chip per `assets[]`, icon by `kind` | `TaskDetailDTO.assets` | Click opens a `contentUrl` dialog; `Space` previews (§12) |
 | 4 · Terminal | `AgentLogStream` | Doc 09 | Fills remaining height; internal scroll |
 | 5 · Actions | Submit review · Open canvas · Force release | §7.5 | Disabled per guards |
@@ -506,7 +506,7 @@ No assignment ⇒ `EmptyState` "Assign a workspace" + `PaneSlotPicker`, with the
 | Force release | `status === 'IN_PROGRESS'` **and** confirm dialog accepted (T11) | `POST /tasks/{id}/force-release/` | `STALE_LEASE` → info toast, invalidate |
 | Requeue | `status === 'REJECTED'` (T13) | `POST /tasks/{id}/requeue/` | invalidate board |
 
-`Force release` is always behind a confirm: it returns a live agent's task to `PENDING` while the agent may still be editing files (Doc 01 §8 T11 — operator action, audited as `LEASE_RECLAIMED`/`human`).
+`Force release` is always behind a confirm: it returns a live agent's task to `PENDING` while the agent may still be editing files (Doc 01 §8 T11 — operator action, audited as `LEASE_RECLAIMED`/`human`). It is also the **only** way the HUD can take work away from an agent — an overdue estimate does not do it, so the confirm copy must say "the agent may still be working" rather than "the lease expired".
 
 ### 7.6 Canvas + terminal integration
 
@@ -536,7 +536,7 @@ Two presentations over one query (`qk.tasks.board | list`). Board = columns by g
 
 ### 8.1 View model
 
-`TaskRowVM` is produced by `select` (§3.7) or `useMemo` over the page: `shortId` (`id.slice(0,8)` uppercased, `TASK-` prefix added in the UI only), `isStale` (`updated_at` older than 24 h), `leaseUrgent` (`lease_seconds_remaining < 120`), `dodState` (`0` → `EMPTY`, `1..99` → `PARTIAL`, `100` → `COMPLETE`), and `blockedReason` (`is_blocked ? 'blocked' : null` — the DTO carries no reason field, so the UI never invents one).
+`TaskRowVM` is produced by `select` (§3.7) or `useMemo` over the page: `shortId` (`id.slice(0,8)` uppercased, `TASK-` prefix added in the UI only), `isStale` (`updated_at` older than 24 h), `leaseUrgent` (`lease_seconds_remaining < 120 && !is_overdue`), `isOverdue` (`is_overdue`), `overdueLabel` (`formatOverdue(lease_seconds_overdue)`, e.g. `12m 30s over`), `dodState` (`0` → `EMPTY`, `1..99` → `PARTIAL`, `100` → `COMPLETE`), and `blockedReason` (`is_blocked ? 'blocked' : null` — the DTO carries no reason field, so the UI never invents one).
 
 ### 8.2 Sorting
 
@@ -764,7 +764,7 @@ Toggle is `X` key or a `Tabs` control; it writes `?x=` and swaps the query key `
 | Position Y | `priority` | §11.4 |
 | Radius | `dod_progress_percent` | `r = 3 + 5 * (pct/100)` → `3..8`; `0 %` still visible at `r=3` |
 | Fill | `status` | token per status; `COMPLETED` at 45 % opacity so history stays context, not noise |
-| Ring | `is_blocked` | 1.5 px stroke, crimson, `r + 2.5`; typically explains low Y despite high dependency |
+| Ring | `is_blocked` | 1.5 px stroke, crimson, `r + 2.5`; typically explains low Y despite high dependency. Legend copy: "blocked — a prerequisite has not reached 100 % DoD" |
 | Dashed outline | `is_agent_discovered` | 1 px dashed cyan, no fill change |
 | Label | `title` | Hover/focus only, never always-on (prevents overlap at 21+ points) |
 | Multi-project | project accent ring on selection only | **Decision:** no per-project colour — status already owns fill, and two simultaneous categorical colours are unreadable |
@@ -1131,7 +1131,9 @@ Triggered by `BACKEND_UNAVAILABLE`, `/healthz` failure, or 3 SSE failures in 30 
 
 * `telemetry.generated_at` older than 60 s ⇒ radar header shows `STALE 1m` and the sweep animation freezes. A live-looking animation over dead data is a lie; freezing it is the honest signal.
 * `last_event_at` older than 10 min on a rail card ⇒ card dims (§6.1).
-* `lease_seconds_remaining < 120` ⇒ countdown turns amber and pulses once per second (with `prefers-reduced-motion`, colour only, no pulse).
+* `lease_seconds_remaining < 120` ⇒ countdown turns amber (colour only, no pulse — the estimate is advisory, Doc 05 §7.4).
+* `is_overdue` ⇒ the lease chip switches to a literal `⏱ OVERDUE` label in crimson whose tooltip reads `Lease 12m 30s over the agent's estimate`, and the row keeps its `IN_PROGRESS` styling. **The board must never imply the task was reassigned**: the same agent still holds it and the stopwatch is informational.
+* `lease_seconds_overdue` is the tooltip's number. It is never rendered as a bare ticking counter, because a counter that only ever grows reads as a failure timer.
 
 ### 16.5 Skeleton policy
 

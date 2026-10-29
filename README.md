@@ -114,7 +114,7 @@ and every line of code defers to it. The pieces most worth knowing:
 | :--- | :--- |
 | Contract version | `1.0.0` |
 | Task statuses | `PENDING_APPROVAL`, `PENDING`, `IN_PROGRESS`, `IN_REVIEW`, `COMPLETED`, `REJECTED` |
-| Lease TTL / heartbeat / grace | 900 s / 120 s / 60 s |
+| Lease estimate / heartbeat interval / overdue grace | 900 s / 120 s / 60 s |
 | MCP token ceiling | 16 384 bytes per tool response |
 | Max patch | 5 MB |
 | Ports | backend 8471, frontend 3471, loopback only |
@@ -124,6 +124,47 @@ Django silently ignores `select_for_update()` on it. The claim is therefore a
 conditional single-statement `UPDATE … WHERE status='PENDING'` inside an
 `IMMEDIATE` transaction; the affected-row count is the linearisation point.
 See `backend/core/leases.py` and Doc 01 §11.
+
+### A lease is a deadline estimate, not an eviction notice
+
+An agent estimates how long the work will take when it claims a task. That
+estimate is **advisory**: an agent is not a fortune teller, so missing it must
+not destroy work in progress.
+
+| When the estimate passes | What happens |
+| :--- | :--- |
+| Task status | stays `IN_PROGRESS` |
+| Owner | stays the same agent |
+| Lease | stays valid; `task_heartbeat` keeps renewing it |
+| Visible effect | an `OVERDUE` badge (`is_overdue`, `lease_seconds_overdue`), a `WARN` event, and a `TASK_OVERDUE` audit line |
+| Cleared by | the next heartbeat, or the task leaving `IN_PROGRESS` |
+
+The task is only ever handed back to the queue by a **human** — force-release,
+archive, or a review rejection. A sweeper thread runs every 60 s and does
+nothing but stamp `lease_overdue_at`, so a wedged sweep can never cost an agent
+its task.
+
+### A dependency is satisfied by progress, not by status
+
+`blocked_by` used to require the blocker to be `COMPLETED`. That deadlocked the
+pipeline: an agent parks finished work in `IN_REVIEW`, and only a human can
+approve it, so every dependent task stayed unclaimable for that whole window.
+
+A blocker now releases its dependents as soon as its **Definition of Done reaches
+100 %**, in whatever status it happens to sit:
+
+* `COMPLETED` wins outright, so a legacy row whose checklist was never filled in
+  still releases its dependents.
+* Otherwise the checklist decides. A task with **no** DoD items reads as 0 % and
+  therefore never satisfies an edge.
+* The claim filter, the `?blocked=` board filter, the priority matrix and the
+  agent-side `search_tasks` all read the same predicate
+  (`backend/core/dependencies.py`).
+
+```
+Auth feature  ──(100% DoD, IN_REVIEW)──▶  User management feature  →  claimable
+```
+
 
 ---
 
@@ -157,8 +198,8 @@ keystroke.
 
 There is no assignee dropdown at creation time because **assignment is a lease,
 not a field**. An agent assigns itself by calling `claim_next_task`, which grants
-a 900 s lease and is the only thing that makes a task `IN_PROGRESS`. Two operator
-overrides exist for the cases a queue cannot express:
+a 900 s completion estimate and is the only thing that makes a task
+`IN_PROGRESS`. Two operator overrides exist for the cases a queue cannot express:
 
 | You want | Use |
 | :--- | :--- |
@@ -234,11 +275,11 @@ would misreport an ordinary burst as a backend fault and would select the
 
 | Tool | Kind | Purpose |
 | :--- | :--- | :--- |
-| `claim_next_task` | core | Lease the highest-priority eligible task |
+| `claim_next_task` | core | Claim the highest-priority eligible task (15 min estimate, not a deadline) |
 | `propose_task` | core | Record an agent-discovered task for triage |
 | `submit_for_review` | core | Attach a patch + log and move to `IN_REVIEW` |
 | `log_task_progress` | core | Append one sanitised line; returns `{"ok": true}` |
-| `task_heartbeat` | supporting | Renew a lease |
+| `task_heartbeat` | supporting | Renew the estimate and clear `OVERDUE` |
 | `update_dod_item` | supporting | Tick a definition-of-done item |
 | `spawn_subtask` | supporting | Create a child task |
 | `get_task_details` | supporting | Re-read a projected task |
@@ -254,6 +295,10 @@ operator approval applies it.
 
 `submit_for_review` refuses to move a task to `IN_REVIEW` unless the agent has
 logged progress **and** every definition-of-done item is ticked (100 %).
+
+Reaching that 100 % is also what unblocks downstream work: a dependent task
+becomes claimable the moment its blocker's DoD hits 100 %, even while the
+blocker is still sitting in `IN_REVIEW` waiting for a human.
 
 `python scripts/bootstrap_dev.py` prints a ready-to-paste
 `.vscode/mcp.json` / `claude_desktop_config.json` block.

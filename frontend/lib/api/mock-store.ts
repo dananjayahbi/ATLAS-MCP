@@ -124,6 +124,10 @@ export function syncCounters(): void {
     if (!rows.some((task) => task.status === "IN_PROGRESS")) project.active_agent_id = null;
   }
   db.telemetry.discoveries_pending = db.discoveries.filter((d) => d.status === "PENDING_APPROVAL").length;
+  // Overdue is advisory and derived: only a live IN_PROGRESS task can carry it.
+  db.telemetry.leases_overdue = Object.values(db.tasks).filter(
+    (task) => task.status === "IN_PROGRESS" && task.is_overdue,
+  ).length;
 }
 
 export function listOf<T>(items: T[]): ListResponse<T> {

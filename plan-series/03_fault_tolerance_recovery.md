@@ -1,9 +1,12 @@
-# Doc 03 — Fault Tolerance, Leases & Crash Recovery
+﻿# Doc 03 — Fault Tolerance, Leases & Crash Recovery
 
 > **Series position:** 03 of 10 · **Owner:** Subagent 3 (Reliability Specialist)
 > **Consumes:** Doc 01 §6.4 (Task lease fields), §8 (state machine), §11 (invariants & frozen timings), §15 (error codes); Doc 02 §5.2, §8.3 (atomic writes)
 > **Publishes to:** Doc 04 (`claim`, `heartbeat`, force-release endpoints), Doc 08 (lease semantics the agent must respect), Doc 09 (`system.recovery` events), Doc 10 (crash-simulation tests)
 > **Owned paths:** `backend/core/leases.py`, `backend/core/recovery.py`, `backend/core/apps.py` (`ready()` hook), `backend/core/maintenance.py`
+
+> **Amended — the lease is no longer an eviction timer.** A missed estimate now
+> produces an **OVERDUE** flag, never a reclaim. See §4.3, §4.6 and §5.2.
 
 ---
 
@@ -15,16 +18,20 @@ The platform must survive the failures below without losing a task, corrupting t
 | :--- | :--- | :--- | :--- |
 | F1 | Host power cut mid-transaction | Corrupt DB / partial commit | WAL + `synchronous=NORMAL` (§3) |
 | F2 | Host power cut mid-file-write | Zero-byte PNG/patch | Atomic temp+`os.replace`+`fsync` (Doc 02 §8.3), `.tmp` sweep (§7.3) |
-| F3 | Agent CLI killed while `IN_PROGRESS` | Task stuck forever | 15 min lease + boot janitor + runtime sweeper (§5, §6) |
+| F3 | Agent killed while `IN_PROGRESS` | Work silently abandoned, task pinned forever | Estimate + heartbeat + **OVERDUE** flag + boot janitor + runtime sweeper (§5, §6); a human force-releases (T11) |
 | F4 | Two agents claim simultaneously | Duplicate work, lost writes | Conditional single-statement claim (§4.2) |
-| F5 | Clock skew between host and container | Spurious lease expiry | 60 s reclaim grace (§5.2) |
-| F6 | Long test run > 15 min with no heartbeat | Lease lost mid-work | Heartbeat contract + re-claim protocol (§4.5) |
+| F5 | Clock skew between host and container | Premature OVERDUE badge | 60 s grace before the flag is raised (§5.2) |
+| F6 | Long task > 15 min | Estimate blown | **Harmless** — the agent keeps the task, heartbeats, and shows OVERDUE while it works (§4.5) |
 | F7 | Disk full | Writes fail after DB commit | Write-before-commit ordering (§7.2) + `507` |
 | F8 | Django restart with live SSE clients | Missed events | `seq` replay + `Last-Event-ID` (Doc 09 §6) |
 | F9 | Corrupt SQLite file | Total outage | `PRAGMA integrity_check` at boot + `.bak` restore path (§3.3) |
 | F10 | Orphaned folders from crashes | Disk growth | `prune_orphans` (§7.3) |
 
 **Design principle:** every durability guarantee is enforced **below** the service layer so no individual endpoint can accidentally bypass it.
+
+**Anti-goal:** the platform must never destroy in-flight work because an agent
+under-guessed its own runtime. An estimate is a scheduling hint, so exceeding it
+is a *display* event, not a *state* event.
 
 ---
 
@@ -33,13 +40,16 @@ The platform must survive the failures below without losing a task, corrupting t
 ```
 backend/core/
 ├── apps.py            # CoreConfig.ready() → recovery.on_startup()   [guarded, idempotent]
-├── leases.py          # grant / renew / release / reclaim  (the only writer of lease fields)
+├── leases.py          # grant / renew / release / mark_overdue  (the only writer of lease fields)
 ├── recovery.py        # WAL bootstrap, integrity check, boot janitor, runtime sweeper
 ├── maintenance.py     # retention pruning, .tmp sweep, orphan folders, VACUUM policy
 └── services/tasks.py  # transition() calls leases.* — never mutates lease columns directly
 ```
 
-**Hard rule:** `Task.lease_id`, `lease_expires_at`, `last_heartbeat_at`, `assigned_agent_id` are written **only** by `core/leases.py`. A code-review checklist item enforces this (`grep -L` style CI check in Doc 10).
+**Hard rule:** `Task.lease_id`, `lease_expires_at`, `lease_overdue_at`,
+`last_heartbeat_at`, `assigned_agent_id` are written **only** by
+`core/leases.py`. A code-review checklist item enforces this (`grep -L` style CI
+check in Doc 10).
 
 ---
 
@@ -100,12 +110,16 @@ def integrity_gate(db_path: Path) -> None:
 
 | Constant | Value | Source |
 | :--- | :--- | :--- |
-| `LEASE_TTL_SECONDS` | `900` (15 min) | Master §5.2 |
+| `LEASE_TTL_SECONDS` | `900` (15 min) | Master §5.2 — the agent's **completion estimate**, not a cutoff |
 | `HEARTBEAT_INTERVAL_SECONDS` | `120` (2 min) | Master §5.2 |
-| `RECLAIM_GRACE_SECONDS` | `60` | Doc 01 §11.2 (clock-skew tolerance) |
+| `RECLAIM_GRACE_SECONDS` | `60` | Doc 01 §11.2 — delay before a blown estimate is flagged OVERDUE (name kept for the frozen-constant gate) |
 | `MAX_LEASE_RENEWALS_BEFORE_WARN` | `30` (≈ 1 h continuous work) | This doc |
 | `CLAIM_RETRY_ATTEMPTS` | `3` | §4.2 |
 | `SWEEPER_INTERVAL_SECONDS` | `60` | §6.1 |
+
+`LEASE_TTL_SECONDS` is deliberately **not** an eviction deadline. Passing it
+never changes `status`, never clears `lease_id` and never reassigns work; see
+§4.6.
 
 ### 4.2 Claim algorithm (SQLite-correct)
 
@@ -120,7 +134,7 @@ def claim_next_task(*, project_slug: str, agent_identifier: str,
                 with connection.cursor() as cur:
                     cur.execute("BEGIN IMMEDIATE")        # write lock at BEGIN
                 candidate_id = (
-                    Task.objects.eligible_for_claim(min_priority)
+                    Task.objects.claimable(min_priority)
                         .for_project(project_slug)
                         .values_list("id", flat=True)
                         .first()
@@ -162,24 +176,27 @@ def claim_next_task(*, project_slug: str, agent_identifier: str,
 ```python
 def heartbeat(*, task_id: str, lease_id: str) -> datetime:
     now = timezone.now()
-    updated = Task.objects.filter(
-        id=task_id, status=TaskStatus.IN_PROGRESS, lease_id=lease_id,
-        lease_expires_at__gt=now - timedelta(seconds=RECLAIM_GRACE_SECONDS),
-    ).update(lease_expires_at=now + timedelta(seconds=LEASE_TTL_SECONDS),
-             last_heartbeat_at=now, updated_at=now)
-    if updated != 1:
-        task = Task.objects.filter(id=task_id).only("status", "lease_id", "lease_expires_at").first()
-        raise StaleLease(detail={
-            "task_id": str(task_id),
-            "current_status": getattr(task, "status", None),
-            "current_lease_id": getattr(task, "lease_id", None),
-            "reason": "expired" if task and task.lease_expires_at and task.lease_expires_at <= now
-                      else "mismatch",
-        })
+    task = Task.objects.get(pk=task_id)
+    if task.status != TaskStatus.IN_PROGRESS:
+        raise InvalidTransition(task.status, "heartbeat")
+    if task.lease_id != lease_id:
+        raise StaleLease(detail={"task_id": str(task_id), "lease_id": lease_id,
+                                 "reason": "mismatch"})
+    Task.objects.filter(pk=task_id, lease_id=lease_id).update(
+        lease_expires_at=now + timedelta(seconds=LEASE_TTL_SECONDS),
+        lease_overdue_at=None,          # the act of reporting in clears OVERDUE
+        last_heartbeat_at=now,
+        updated_at=now,
+    )
     return now + timedelta(seconds=LEASE_TTL_SECONDS)
 ```
 
-The grace window is applied to **renewal** (not to claim) so a heartbeat that arrives 30 s late due to clock skew still succeeds instead of forcing a needless re-claim. The `stale` error payload is machine-actionable: Doc 08 turns it into an instruction the agent can follow ("release work, re-claim").
+A `lease_id` **mismatch** is the only reason a heartbeat is rejected: it means
+another writer owns the row, so this caller must stop. An **expired**
+`lease_expires_at` is not a rejection — the agent is simply late, and a heartbeat
+is exactly how it says "still here, still working, new estimate follows". The
+renewal therefore both extends the estimate and clears `lease_overdue_at`, which
+is what removes the row from the overdue board.
 
 Heartbeat is **idempotent** — repeating it just extends the expiry.
 
@@ -187,15 +204,21 @@ Heartbeat is **idempotent** — repeating it just extends the expiry.
 
 | Path | Trigger | Implementation |
 | :--- | :--- | :--- |
-| `release_on_submit(task)` | `submit_for_review` (T7) | Clears `lease_id`, `lease_expires_at`; keeps `assigned_agent_id` for provenance; sets `submitted_at`. |
+| `release_on_submit(task)` | `submit_for_review` (T7) | Clears `lease_id`, `lease_expires_at`, `lease_overdue_at`; keeps `assigned_agent_id` for provenance; sets `submitted_at`. |
 | `release_on_reject(task)` | `reject_review` (T9) | Clears lease columns; status → `PENDING`; preserves `review_notes`. |
 | `force_release(task, actor)` | Human "force release" in HUD (T11) | Same as submit-clear, plus audit `LEASE_RECLAIMED` with `actor="human"`. Refuses if the task is not `IN_PROGRESS` (`409 INVALID_TRANSITION`). |
 
 All three run inside `transaction.atomic()` and emit `task.status_changed`.
 
-### 4.5 Re-claim protocol after lease loss
+**These are the only ways work leaves an agent.** Nothing in the sweeper, the
+heartbeat path or the passage of time can trigger them.
 
-When an agent receives `STALE_LEASE`, it must **not** submit the work it did under the lost lease (another agent may have already re-claimed). The defined sequence:
+### 4.5 Re-claim protocol after a **lost** lease
+
+An agent only loses a lease when a human force-released it, a reviewer rejected
+the submission (T9), or the project was archived — never because a clock ran
+out. On the resulting `STALE_LEASE` the agent must **not** submit work done under
+the lost lease (another agent may already hold the row). The defined sequence:
 
 ```mermaid
 sequenceDiagram
@@ -204,8 +227,8 @@ sequenceDiagram
     participant D as Django
     A->>M: task_heartbeat(task_id, lease_id)
     M->>D: POST /internal/v1/heartbeat
-    D-->>M: 409 STALE_LEASE {reason:"expired"}
-    M-->>A: {action:"STOP_AND_RECLAIM", lost_work:true}
+    D-->>M: 409 STALE_LEASE {reason:"mismatch"}
+    M-->>A: {action:"STOP_AND_RELEASE", lost_work:true}
     A->>A: stash local diff (do not commit)
     A->>M: claim_next_task(project_slug, agent_identifier)
     M-->>A: possibly the same task, new lease_id
@@ -213,16 +236,34 @@ sequenceDiagram
     A->>M: task_heartbeat(new_lease_id)
 ```
 
-The agent must log `resumed after lease loss` via `log_task_progress` so the HUD shows the discontinuity (this is the moment a human should glance at the task).
+The agent must log `resumed after lease loss` via `log_task_progress` so the HUD
+shows the discontinuity (this is the moment a human should glance at the task).
 
-### 4.6 Expiry predicate (single source of truth)
+**Running overtime is not a lost lease.** An agent whose estimate has passed
+keeps its `lease_id`, keeps mutating its checklist, keeps submitting for review
+and never re-claims. It only shows an OVERDUE badge.
+
+### 4.6 Overdue predicate (single source of truth)
 
 ```python
-EXPIRED_Q = Q(status=TaskStatus.IN_PROGRESS,
+OVERDUE_Q = Q(status=TaskStatus.IN_PROGRESS,
+              lease_overdue_at__isnull=True,
               lease_expires_at__lt=timezone.now() - timedelta(seconds=RECLAIM_GRACE_SECONDS))
 ```
 
-Every sweeper, endpoint and test imports this predicate. Divergent ad-hoc comparisons are forbidden — they are the most common source of "task stuck forever" bugs in lease systems.
+Every sweeper, endpoint and test imports this predicate. Divergent ad-hoc
+comparisons are forbidden — they are the most common source of "task stuck
+forever" bugs in lease systems.
+
+Two derived read-only fields carry the state to clients:
+
+| Field | Derivation | Meaning |
+| :--- | :--- | :--- |
+| `is_overdue` | `lease_overdue_at IS NOT NULL` | the sweeper has raised the flag |
+| `lease_seconds_overdue` | `now - lease_expires_at`, floored at `0` | a live stopwatch, so the HUD keeps counting between 60 s sweeps |
+
+`lease_seconds_overdue` is computed from the clock rather than stored, so it is
+correct even in the 60-second gap before the sweeper stamps the row.
 
 ---
 
@@ -242,7 +283,7 @@ sequenceDiagram
     RC->>DB: assert_pragmas()
     RC->>DB: integrity_gate()
     RC->>FS: ensure root dirs, sweep *.tmp
-    RC->>DB: reclaim_expired_tasks()
+    RC->>DB: mark_overdue()
     RC->>FS: repair_missing_task_folders()
     RC->>DB: prune_retention()
     RC->>FS: prune_orphans()
@@ -263,44 +304,61 @@ def _schema_ready() -> bool:
     return "core_task" in connection.introspection.table_names()
 ```
 
-### 5.2 `reclaim_expired_tasks()`
+### 5.2 `mark_overdue()`
 
 ```python
-def reclaim_expired_tasks(*, actor: str = "system") -> int:
+def mark_overdue(*, grace_seconds: int = RECLAIM_GRACE_SECONDS) -> list[Task]:
+    """Flag in-progress tasks whose estimated deadline has passed.
+
+    The *whole* consequence of a missed estimate: a timestamp and a WARN line.
+    Status, lease_id and assigned_agent_id are untouched.
+    """
     now = timezone.now()
-    ids = list(Task.objects.filter(EXPIRED_Q).values_list("id", flat=True))
-    reclaimed = 0
-    for task_id in ids:
+    cutoff = now - timedelta(seconds=max(0, grace_seconds))
+    marked: list[Task] = []
+    for task in Task.objects.filter(OVERDUE_Q).select_related("project")[:200]:
         with transaction.atomic():
-            task = Task.objects.select_for_update().get(id=task_id)   # no-op on SQLite but harmless
-            if task.status != TaskStatus.IN_PROGRESS:
-                continue                                              # someone else fixed it
-            previous_lease = task.lease_id
-            task.status = TaskStatus.PENDING
-            task.lease_id = None
-            task.lease_expires_at = None
-            task.assigned_agent_id = None
-            task.save(update_fields=["status", "lease_id", "lease_expires_at",
-                                     "assigned_agent_id", "updated_at"])
-            _append_crash_log(task, previous_lease)
-            events.publish(TaskEvent(...type=TASK_LEASE_EXPIRED, level=WARN,
-                 message=f"[SYSTEM CRASH DETECTED] reclaiming expired lease {previous_lease}"))
-            audit.record(task.project, "LEASE_RECLAIMED", actor=actor, task_id=str(task.id),
-                         detail={"previous_lease": previous_lease,
-                                 "expired_at": iso(task.lease_expires_at)})
-            reclaimed += 1
-    return reclaimed
+            updated = Task.objects.filter(
+                pk=task.pk, status=TaskStatus.IN_PROGRESS,
+                lease_overdue_at__isnull=True, lease_expires_at__lt=cutoff,
+            ).update(lease_overdue_at=now, updated_at=now)
+            if updated != 1:
+                continue                                   # a heartbeat beat us to it
+            task.refresh_from_db()
+            marked.append(task)
+            events.publish(TaskEvent(
+                type=TASK_LEASE_EXPIRED, level=WARN,
+                message=f"[OVERDUE] estimated completion time passed "
+                        f"{seconds_overdue(task, now=now)}s ago; the agent keeps the task."))
+            audit.record(task.project, "TASK_OVERDUE", actor="system", task_id=str(task.id),
+                         detail={"lease_id": task.lease_id,
+                                 "lease_expires_at": iso(task.lease_expires_at)})
+    return marked
 ```
 
-**Per-task transaction** (not one giant transaction) so a single poisoned row cannot block recovery of the rest, and so the SSE bus sees incremental progress.
+**Per-task transaction** (not one giant transaction) so a single poisoned row
+cannot block the rest of the sweep, and so the SSE bus sees incremental
+progress.
 
-**Crash log line** written to `execution.log`:
+**Idempotence** comes from the `lease_overdue_at IS NULL` predicate in both the
+read and the `UPDATE`. The boot janitor and the runtime sweeper may race freely;
+a row is stamped and announced exactly once.
+
+**Nothing is destroyed.** The task keeps its `status`, its `lease_id`, its
+`assigned_agent_id` and its checklist progress. An agent that is simply slow
+keeps working, and its next heartbeat clears the flag.
+
+**Overdue log line** written to `execution.log`:
 
 ```
-08:10:11 WARN  [SYSTEM CRASH DETECTED] lease lea_01JA2Y… expired at 2026-10-27T08:05:00Z (attempt 2/…); task returned to PENDING
+08:10:11 WARN  [OVERDUE] estimated completion time passed 300s ago; the agent keeps the task.
 ```
 
-This is the string Doc 09 renders in the terminal pane and Doc 06's activity stream surfaces in crimson.
+This is the string Doc 09 renders in the terminal pane and Doc 06's activity
+stream surfaces in amber.
+
+**Operator action:** the human either waits (the agent may just be slow) or
+force-releases (T11). Both are explicit; neither happens on a timer.
 
 ### 5.3 `repair_missing_task_folders()`
 
@@ -313,7 +371,7 @@ For every non-archived task that lacks its `storage/projects/{pid}/tasks/{tid}/`
 class StartupReport:
     pragmas_ok: bool
     integrity: str                 # "ok" | findings summary
-    reclaimed_tasks: int
+    overdue_tasks: int
     repaired_folders: int
     pruned_events: int
     swept_temp_files: int
@@ -324,9 +382,11 @@ class StartupReport:
 Exposed at `GET /healthz` (unauthenticated, Doc 01 §12) as:
 
 ```json
-{ "status": "ok", "db": "wal", "recovered_tasks": 2, "startup_ms": 184,
+{ "status": "ok", "db": "wal", "overdue_tasks": 2, "startup_ms": 184,
   "last_boot": "2026-10-27T08:10:11.297Z", "recovered_at": "2026-10-27T08:10:11.481Z" }
 ```
+
+`overdue_tasks` is a *count of flags raised*, not a count of work rescued.
 
 ---
 
@@ -340,9 +400,9 @@ A single daemon thread (not Celery — a scheduler dependency is unjustified for
 def _sweeper_loop(stop: threading.Event) -> None:
     while not stop.wait(SWEEPER_INTERVAL_SECONDS):
         try:
-            n = reclaim_expired_tasks(actor="sweeper")
-            if n:
-                logger.warning("sweeper reclaimed %d expired leases", n)
+            marked = leases.mark_overdue()
+            if marked:
+                logger.warning("sweeper flagged %d overdue lease(s)", len(marked))
             repair_missing_task_folders(limit=50)
         except Exception:                       # never let the thread die
             logger.exception("sweeper iteration failed")
@@ -350,12 +410,14 @@ def _sweeper_loop(stop: threading.Event) -> None:
 
 | Property | Value | Rationale |
 | :--- | :--- | :--- |
-| Cadence | 60 s | 15× faster than the shortest realistic lease lifetime; negligible cost (one indexed query). |
+| Cadence | 60 s | Keeps the OVERDUE badge within a minute of the estimate; negligible cost (one indexed query). |
+| Effect | stamps `lease_overdue_at` + emits `WARN` | **Never** mutates `status`, `lease_id` or `assigned_agent_id`. |
 | Guard | `ATLAS_DISABLE_SWEEPER=1` | Tests and management commands opt out. |
 | Crash containment | broad `except` inside the loop | A failed tick must never stop future ticks. |
-| Single instance | thread started only when `runserver`/`uvicorn` is the primary process | Prevents N workers × N sweepers (reclaim is idempotent, but avoid waste). |
+| Single instance | thread started only when `runserver`/`uvicorn` is the primary process | Prevents N workers × N sweepers (marking is idempotent, but avoid waste). |
+| Thread name | `atlas-overdue-sweeper` | Shows up in stack dumps and logs. |
 
-**Decision:** the sweeper is *not* a separate process. A separate process would need its own supervision (systemd/PM2), contradicting the "single `manage.py runserver` developer experience" constraint. Idempotent reclaim makes multi-worker duplication harmless anyway.
+**Decision:** the sweeper is *not* a separate process. A separate process would need its own supervision (systemd/PM2), contradicting the "single `manage.py runserver` developer experience" constraint. Idempotent marking makes multi-worker duplication harmless anyway.
 
 ### 6.2 Disk pressure guard
 
@@ -440,8 +502,8 @@ One `VACUUM INTO` at boot, gated to ≥ 24 h since the last backup, gives a cons
 | I1 | Claims == distinct leases issued | `claim_next_task` single `UPDATE` | `test_claim_lease_bijection` |
 | I2 | No double-claim under concurrency | conditional `UPDATE` + `BEGIN IMMEDIATE` | `test_parallel_claims` (20 threads) |
 | I3 | `IN_PROGRESS ⇔ lease` | DB CHECK `ck_task_lease_invariant` | `test_lease_check_constraint` |
-| I4 | Stale heartbeat mutates nothing | `heartbeat` filter + `409` | `test_stale_heartbeat_noop` |
-| I5 | No expired leases after boot | `reclaim_expired_tasks()` | `test_boot_reclaims` |
+| I4 | Stale heartbeat mutates nothing | `heartbeat` lease-id check + `409` | `test_stale_heartbeat_noop` |
+| I5 | A missed estimate never evicts an agent | `mark_overdue()` writes only `lease_overdue_at` | `test_i5_boot_recovery_flags_overdue_leases_without_reclaiming` |
 | I6 | No partial files | temp+replace+fsync | `test_kill_mid_write` |
 | — | Row ⇒ file exists | write-before-commit (§7.1) | `test_submit_rollback_leaves_no_row` |
 | — | `seq` gap-free | unique `(project, seq)` + `BEGIN IMMEDIATE` | `test_event_seq_monotonic` |
@@ -452,12 +514,13 @@ One `VACUUM INTO` at boot, gated to ≥ 24 h since the last backup, gives a cons
 
 | Scenario | Symptom | Action | Expected duration |
 | :--- | :--- | :--- | :--- |
-| **Power cut mid-task** | Task shows `IN_PROGRESS` with an agent that is offline | Restart Django. Janitor reclaims after grace; `[SYSTEM CRASH DETECTED]` appears in the pane. | < 5 s after boot |
-| **Agent CLI killed, host alive** | Lease countdown in the HUD reaches 0 | Sweeper reclaims within 120 s; no operator action. | ≤ 120 s |
-| **Agent wedged but alive (heartbeating)** | Task stuck `IN_PROGRESS` for hours | Human "force release" in the HUD (`T11`). | instant |
+| **Power cut mid-task** | Task shows `IN_PROGRESS` with an agent that is offline | Restart Django. Janitor marks it OVERDUE; `[OVERDUE]` appears in the pane. Decide: force-release (`T11`) or hand the task back to an agent by releasing it. | instant |
+| **Agent CLI killed, host alive** | Overdue stopwatch in the HUD starts counting | No automatic rescue by design. Force-release (`T11`) if the agent is really gone; otherwise let it finish. | operator decision |
+| **Agent wedged but alive (heartbeating)** | Task stuck `IN_PROGRESS` for hours, never overdue | Human "force release" in the HUD (`T11`). | instant |
+| **Agent simply slow** | OVERDUE badge appears, work continues | Nothing. The badge clears itself on the next heartbeat. | automatic |
 | **Corrupt DB** | Startup aborts with `DatabaseCorrupt` | Stop, move `atlas.db*` aside, restore `.bak`, restart, reconstruct from `meta.json` if needed. | minutes |
 | **Disk full** | `507 STORAGE_WRITE_FAILED` banner | Free space; retry submit; no DB cleanup needed (rollback was clean). | minutes |
-| **Clock jumped forward** | Mass lease expiry | Grace window absorbs ≤ 60 s; larger jumps reclaim work and agents re-claim (safe by §4.5). | automatic |
+| **Clock jumped forward** | Mass OVERDUE badges | Grace window absorbs ≤ 60 s. Larger jumps still only flag rows — no work is lost, and agents heartbeat the flag away (safe by §4.5). | automatic |
 | **Restart with live HUD tabs** | Terminal stalls then resumes | `EventSource` reconnects with `Last-Event-ID`; replay fills the gap (Doc 09 §6). | ≤ 3 s |
 
 ---
@@ -473,6 +536,8 @@ One `VACUUM INTO` at boot, gated to ≥ 24 h since the last backup, gives a cons
 | `test_lease_ttl_constant` | `LEASE_TTL_SECONDS == 900`, `HEARTBEAT_INTERVAL_SECONDS == 120`, `RECLAIM_GRACE_SECONDS == 60` |
 | `test_expired_predicate` | Rows inside/outside the grace window classify correctly |
 | `test_lease_fields_only_written_by_leases_module` | Static grep: no `Task.objects.update(...lease_...)` outside `leases.py` |
+| `test_seconds_overdue_is_clock_derived` | A row not yet stamped by the sweeper still reports `lease_seconds_overdue > 0` |
+| `test_heartbeat_clears_overdue` | Renewal sets `lease_expires_at` forward and `lease_overdue_at = NULL` |
 
 ### 10.2 Concurrency (the critical suite)
 
@@ -491,20 +556,24 @@ def test_parallel_claims(db, project_factory, task_factory):
     assert all(t.lease_id and t.status == "IN_PROGRESS" for t in results if t)
 ```
 
-Plus: `test_heartbeat_race_with_reclaim` (heartbeat and reclaim interleaved must never resurrect a `PENDING` task into `IN_PROGRESS` without a new lease id).
+Plus: `test_heartbeat_race_with_marking` (heartbeat and the sweeper interleaved must never resurrect a `PENDING` task into `IN_PROGRESS` without a new lease id, and must never leave a stale `lease_overdue_at` on a renewed lease).
 
 ### 10.3 Crash simulation
 
 `scripts/simulate_power_cut.py` (Doc 10 owns the script; Doc 03 defines the contract):
 
 1. Claim a task, write a 5 MB patch to a temp file, then `os.kill(os.getpid(), SIGKILL)` mid-`os.replace`.
-2. Assert after restart: no zero-byte `git_patch.patch`, no `Asset` row without a file, task reclaimed.
+2. Assert after restart: no zero-byte `git_patch.patch`, no `Asset` row without a file, task still `IN_PROGRESS` and flagged OVERDUE (the janitor no longer steals it).
 
 ### 10.4 Recovery integration
 
 | Test | Assertion |
 | :--- | :--- |
-| `test_boot_reclaims_expired` | `IN_PROGRESS` + old lease → `PENDING`, crash line appended, event emitted |
+| `test_i5_boot_recovery_flags_overdue_leases_without_reclaiming` | `IN_PROGRESS` + old estimate → still `IN_PROGRESS`, still the same `lease_id`, `lease_overdue_at` set, `[OVERDUE]` line emitted |
+| `test_overdue_marking_is_idempotent` | Two sweeps → one flag, one event |
+| `test_heartbeat_after_the_deadline_still_succeeds` | A late heartbeat renews the lease and clears the flag |
+| `test_expired_lease_can_still_submit_for_review` | T7 does not depend on `lease_expires_at` |
+| `test_human_force_release_is_the_only_way_to_take_work_back` | No sweeper path changes `status` |
 | `test_boot_is_idempotent` | Two consecutive `on_startup()` calls → same state, no duplicate events |
 | `test_ready_skips_without_schema` | `ready()` before migrations does not raise |
 | `test_repair_missing_folder` | Deleted folder is re-created on boot |
@@ -518,11 +587,13 @@ Plus: `test_heartbeat_race_with_reclaim` (heartbeat and reclaim interleaved must
 - [ ] `LEASE_TTL_SECONDS=900`, `HEARTBEAT_INTERVAL_SECONDS=120`, `RECLAIM_GRACE_SECONDS=60` are the only definitions.
 - [ ] Claim uses `BEGIN IMMEDIATE` + conditional `UPDATE`; no reliance on `select_for_update`.
 - [ ] Exactly one writer module (`leases.py`) mutates lease columns (CI grep check).
-- [ ] Boot sequence: pragmas → integrity → reclaim → folder repair → retention → publish.
+- [ ] **No code path changes a task's status because a clock ran out** — only `release`, `archive` and `reject_review` take work from an agent.
+- [ ] `lease_overdue_at` is the only durable trace of a missed estimate; `is_overdue` / `lease_seconds_overdue` are derived at read time.
+- [ ] Boot sequence: pragmas → integrity → mark overdue → folder repair → retention → publish.
 - [ ] `ready()` is idempotent, test-safe, and migration-safe.
-- [ ] Runtime sweeper runs every 60 s, never dies, can be disabled by env.
+- [ ] Runtime sweeper runs every 60 s, never dies, can be disabled by env, and only marks.
 - [ ] Submit writes files before commit; rollback leaves no dangling rows.
-- [ ] `/healthz` exposes `StartupReport`.
+- [ ] `/healthz` exposes `StartupReport` with `overdue_tasks`.
 - [ ] All §10 tests pass, including the 20-thread claim race.
 
 ---
@@ -531,19 +602,19 @@ Plus: `test_heartbeat_race_with_reclaim` (heartbeat and reclaim interleaved must
 
 | Direction | Contract |
 | :--- | :--- |
-| **Publishes → Doc 04** | `leases.claim_next_task()`, `leases.heartbeat()`, `leases.force_release()`, `recovery.StartupReport`, `StaleLease`/`BackendUnavailable` exceptions |
-| **Publishes → Doc 08** | Lease error payload shape (`reason: expired|mismatch`), `STOP_AND_RECLAIM` guidance, timings the agent prompt must state |
-| **Publishes → Doc 09** | `SYSTEM_RECOVERY` / `TASK_LEASE_EXPIRED` events, `[SYSTEM CRASH DETECTED]` log format |
+| **Publishes → Doc 04** | `leases.claim_next_task()`, `leases.heartbeat()`, `leases.release()`, `leases.mark_overdue()`, `recovery.StartupReport`, `StaleLease`/`BackendUnavailable` exceptions |
+| **Publishes → Doc 08** | Lease error payload shape (`reason: "mismatch"` only), `STOP_AND_RELEASE` guidance, the rule that running overtime is NOT a lost lease |
+| **Publishes → Doc 09** | `SYSTEM_RECOVERY` / `TASK_LEASE_EXPIRED` events, `[OVERDUE]` log format |
 | **Publishes → Doc 10** | Invariant IDs I1–I6, `simulate_power_cut.py` contract, `ATLAS_FORCE_RECOVERY` env flag |
 | **Consumes from Doc 01** | §8 transitions T5/T6/T7/T10/T11, §11 invariants and timings, §15 error codes |
-| **Consumes from Doc 02** | `Task.objects.eligible_for_claim`, `leased_expired`, `StorageRouter` atomic writes |
+| **Consumes from Doc 02** | `Task.objects.claimable`, `overdue()`, `StorageRouter` atomic writes |
 
 ---
 
 ## 13. Implementation Checklist for Subagent 3
 
-1. `core/leases.py` — constants, `EXPIRED_Q`, `claim_next_task`, `heartbeat`, `release_*`, `force_release`; write the concurrency test **first**.
-2. `core/recovery.py` — `assert_pragmas`, `integrity_gate`, `reclaim_expired_tasks`, `repair_missing_task_folders`, `on_startup` with guard flags.
+1. `core/leases.py` — constants, `OVERDUE_Q`, `claim_next_task`, `heartbeat`, `release`, `mark_overdue`, `seconds_overdue`; write the concurrency test **first**.
+2. `core/recovery.py` — `assert_pragmas`, `integrity_gate`, `mark_overdue` sweep, `repair_missing_task_folders`, `on_startup` with guard flags.
 3. `core/apps.py` — `CoreConfig.ready()` wiring, `_schema_ready()` probe, sweeper thread start.
 4. `core/maintenance.py` — tmp sweep, retention prune, `.trash` prune, `VACUUM INTO` backup.
 5. Wire `/healthz` (payload only; Doc 04 mounts the route).

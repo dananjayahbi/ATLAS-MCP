@@ -62,18 +62,24 @@ def integrity_check() -> tuple[bool, str]:
 # Boot janitor (Doc 03 §4)
 # ---------------------------------------------------------------------------
 def recover_on_boot() -> dict[str, object]:
-    """Reclaim leases abandoned by a crash and emit a boot event."""
+    """Flag abandoned deadlines and emit a boot event.
+
+    Nothing is re-queued on boot. A process restart says nothing about whether
+    the *work* survived — the agent may still be running, or the operator may be
+    about to resume it by hand — so recovery only marks passed estimates overdue
+    and lets a human decide.
+    """
     from core import leases
     from core.enums import EventType
     from core.events import emit
     from core.models import Project
 
     grace = int(getattr(settings, "ATLAS_RECLAIM_GRACE_SECONDS", 60))
-    reclaimed = leases.reclaim_expired(older_than_seconds=grace)
+    overdue = leases.mark_overdue(grace_seconds=grace)
 
-    if reclaimed:
+    if overdue:
         by_project: dict[object, int] = {}
-        for task in reclaimed:
+        for task in overdue:
             by_project[task.project_id] = by_project.get(task.project_id, 0) + 1
         for project_id, count in by_project.items():
             project = Project.objects.filter(pk=project_id).first()
@@ -83,8 +89,8 @@ def recover_on_boot() -> dict[str, object]:
                 project=project,
                 type=EventType.SYSTEM_RECOVERY,
                 level="WARN",
-                message=f"Boot recovery reclaimed {count} stale lease(s).",
-                payload={"recovered_tasks": count},
+                message=f"Boot recovery flagged {count} overdue lease(s).",
+                payload={"overdue_tasks": count},
             )
 
     for project in Project.objects.all():
@@ -95,9 +101,9 @@ def recover_on_boot() -> dict[str, object]:
             payload={"boot_id": getattr(settings, "ATLAS_BOOT_ID", "unknown")},
         )
 
-    _boot_state.update({"booted": True, "recovered": len(reclaimed)})
-    logger.info("boot recovery complete: %s task(s) reclaimed", len(reclaimed))
-    return {"recovered_tasks": len(reclaimed)}
+    _boot_state.update({"booted": True, "recovered": len(overdue)})
+    logger.info("boot recovery complete: %s task(s) marked overdue", len(overdue))
+    return {"overdue_tasks": len(overdue)}
 
 
 def health_report() -> dict[str, object]:
@@ -122,7 +128,7 @@ def health_report() -> dict[str, object]:
         "status": "ok" if ok else "degraded",
         "db": _boot_state.get("db", "unknown"),
         "integrity": message,
-        "recovered_tasks": _boot_state.get("recovered", 0),
+        "overdue_tasks": _boot_state.get("recovered", 0),
         "boot_id": getattr(settings, "ATLAS_BOOT_ID", "unknown"),
         **counts,
     }
@@ -135,9 +141,9 @@ def _sweep_once() -> int:
     from core import leases
 
     try:
-        return len(leases.reclaim_expired())
+        return len(leases.mark_overdue())
     except Exception:  # pragma: no cover - never kill the thread
-        logger.exception("runtime lease sweep failed")
+        logger.exception("runtime overdue sweep failed")
         return 0
 
 
@@ -148,7 +154,11 @@ def _sweeper_loop(interval: int) -> None:
 
 
 def start_background_sweeper() -> None:
-    """Idempotent: at most one sweeper thread per process."""
+    """Idempotent: at most one sweeper thread per process.
+
+    The sweeper only *marks* overdue work. It never returns a task to the queue,
+    so a slow or wedged sweep can never cost an agent its in-flight task.
+    """
     global _sweeper_thread
     if os.environ.get("ATLAS_DISABLE_SWEEPER") == "1":
         return
@@ -165,12 +175,12 @@ def start_background_sweeper() -> None:
         thread = threading.Thread(
             target=_sweeper_loop,
             args=(interval,),
-            name="atlas-lease-sweeper",
+            name="atlas-overdue-sweeper",
             daemon=True,
         )
         thread.start()
         _sweeper_thread = thread
-        logger.info("lease sweeper started (every %ss)", interval)
+        logger.info("overdue sweeper started (every %ss)", interval)
 
 
 def stop_background_sweeper() -> None:  # pragma: no cover - test helper

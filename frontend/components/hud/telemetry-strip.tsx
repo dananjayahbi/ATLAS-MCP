@@ -51,7 +51,13 @@ export function TelemetryStrip({ telemetry, className }: TelemetryStripProps) {
         label="Leases ≤5m"
         value={String(telemetry.leases_expiring_within_5m)}
         tone={telemetry.leases_expiring_within_5m > 0 ? "text-critical-hot" : "text-primary"}
-        hint="Agent leases expiring within five minutes"
+        hint="Agent lease estimates elapsing within five minutes (advisory)"
+      />
+      <Metric
+        label="Leases overdue"
+        value={String(telemetry.leases_overdue)}
+        tone={telemetry.leases_overdue > 0 ? "text-critical-hot" : "text-primary"}
+        hint="IN_PROGRESS tasks past their agent's estimate — still owned, just flagged"
       />
       <Metric
         label="Throughput 24h"

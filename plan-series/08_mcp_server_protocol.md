@@ -1,4 +1,4 @@
-# Doc 08 — FastMCP Protocol Server & Tool Contracts
+﻿# Doc 08 — FastMCP Protocol Server & Tool Contracts
 
 > **Series position:** 08 of 10 · **Owner:** Subagent 8 (MCP Protocol Lead)
 > **Consumes:** Doc 01 §5 (paths), §6 (enums), §9 (tool contracts), §9.6 (projection limits), §9.7 (error surface), §10 (`/internal/v1`), §11.2 (lease constants), §13 (env), §14 (security), §15 (taxonomy); Doc 02 §8 (`StorageRouter`, `to_absolute`, `ensure_within_root`).
@@ -469,7 +469,7 @@ The first eight are the frozen protocol surface. The last two (§7.9, §7.10) ex
 {"ok": true, "status": "IN_REVIEW", "dod_progress_percent": 100}
 ```
 
-**Failure modes.** `INVALID_ARGUMENT` when `git_patch` exceeds 5 MB (pre-flighted locally, never uploaded) or lacks `---`/`+++` markers · `TASK_CONFLICT` (`INVALID_TRANSITION`) when the task is not `IN_PROGRESS` · `LEASE_INVALID` (`STALE_LEASE`, Doc 01 T7) when the lease expired · `REVIEW_PRECONDITION_FAILED` (`409`) when the task has **no** `task.log` entry (the agent never called `log_task_progress`) or its DoD is below 100 % — `detail.field` says which, so the agent knows what to do next · duplicate submit of an identical patch succeeds idempotently per `(task_id, sha256(git_patch))` · `STORAGE_WRITE_FAILED` on a full disk. **Route.** `POST /internal/v1/submit`. No lease id is sent: Doc 01 §9.4 freezes the parameter list, so ownership is resolved server-side from `task_id` + `X-ATLAS-Agent`.
+**Failure modes.** `INVALID_ARGUMENT` when `git_patch` exceeds 5 MB (pre-flighted locally, never uploaded) or lacks `---`/`+++` markers · `TASK_CONFLICT` (`INVALID_TRANSITION`) when the task is not `IN_PROGRESS` · `LEASE_INVALID` (`STALE_LEASE`, Doc 01 T7) when the `lease_id` no longer matches (a human released the task or a reviewer rejected it) — **not** when the estimate merely passed · `REVIEW_PRECONDITION_FAILED` (`409`) when the task has **no** `task.log` entry (the agent never called `log_task_progress`) or its DoD is below 100 % — `detail.field` says which, so the agent knows what to do next · duplicate submit of an identical patch succeeds idempotently per `(task_id, sha256(git_patch))` · `STORAGE_WRITE_FAILED` on a full disk. **Route.** `POST /internal/v1/submit`. No lease id is sent: Doc 01 §9.4 freezes the parameter list, so ownership is resolved server-side from `task_id` + `X-ATLAS-Agent`.
 
 **Preconditions.** Both are checked on every submit, including a re-submit of an already-`IN_REVIEW` task, because a reviewer rejection can untick DoD items:
 
@@ -503,7 +503,12 @@ The first eight are the frozen protocol surface. The last two (§7.9, §7.10) ex
 
 ### 7.5 `task_heartbeat` (supporting) — `POST /internal/v1/heartbeat`
 
-**Purpose.** Extend the lease by another 900 s so long work is not reclaimed mid-task (Master §5.2). Called by the **agent**, never by the adapter (§11.1).
+**Purpose.** Refresh the estimate by another 900 s and clear the OVERDUE flag. Called by the **agent**, never by the adapter (§11.1).
+
+> **The estimate is advisory.** Blowing `lease_expires_at` does not lose the task.
+> The sweeper only stamps `lease_overdue_at` and prints an `[OVERDUE]` warn line;
+> the agent keeps `lease_id`, keeps mutating its checklist and can still submit.
+> A heartbeat after the estimate has passed returns `200`, not `409`.
 
 **Parameters**
 
@@ -514,17 +519,21 @@ The first eight are the frozen protocol surface. The last two (§7.9, §7.10) ex
 **Returns**
 
 ```json
-{"type": "object", "properties": {"ok": {"type": "boolean"}, "lease_expires_at": {"type": "string", "description": "ISO-8601 UTC Z"}, "seconds_remaining": {"type": "integer"}}, "required": ["ok", "lease_expires_at", "seconds_remaining"]}
+{"type": "object", "properties": {"ok": {"type": "boolean"}, "lease_expires_at": {"type": "string", "description": "ISO-8601 UTC Z"}, "seconds_remaining": {"type": "integer"}, "is_overdue": {"type": "boolean"}, "lease_seconds_overdue": {"type": "integer", "minimum": 0}}, "required": ["ok", "lease_expires_at", "seconds_remaining"]}
 ```
+
+`is_overdue` / `lease_seconds_overdue` are always `false` / `0` on a successful
+renewal — the act of reporting in is what clears the flag. They exist so the
+agent's adapter can log "I was N seconds over" without a second call.
 
 **Example**
 
 ```json
 {"task_id": "5f2d6c1e-1f0b-4c5b-9a2e-77d0d2f3c901", "lease_id": "lea_01JA2Y7Q0K3M9V2T"}
-{"ok": true, "lease_expires_at": "2026-10-27T14:02:11.297Z", "seconds_remaining": 897}
+{"ok": true, "lease_expires_at": "2026-10-27T14:02:11.297Z", "seconds_remaining": 897, "is_overdue": false, "lease_seconds_overdue": 0}
 ```
 
-**Failure modes.** `LEASE_INVALID` for a mismatched or expired `lease_id`, carrying `hint: "STOP_WORK_AND_RECLAIM"` (§11.2) · `TASK_CONFLICT` when the task is not `IN_PROGRESS` · `TASK_NOT_FOUND` · `BACKEND_UNAVAILABLE` (`retryable: true`). **Route.** `POST /internal/v1/heartbeat`.
+**Failure modes.** `LEASE_INVALID` **only** for a mismatched `lease_id` (someone else owns the row now), carrying `hint: "STOP_WORK_AND_RECLAIM"` (§11.2); a blown estimate returns `200` · `TASK_CONFLICT` when the task is not `IN_PROGRESS` · `TASK_NOT_FOUND` · `BACKEND_UNAVAILABLE` (`retryable: true`). **Route.** `POST /internal/v1/heartbeat`.
 
 ### 7.6 `update_dod_item` (supporting) — `POST /internal/v1/dod`
 
@@ -609,9 +618,18 @@ The first eight are the frozen protocol surface. The last two (§7.9, §7.10) ex
    "project_rules": {"type": "string", "maxLength": 1200},
    "definition_of_done": {"type": "array", "maxItems": 40, "items": {"type": "object"}},
    "attached_images": {"type": "array", "maxItems": 10, "items": {"type": "string"}},
+   "blocked_by": {"type": "array", "maxItems": 40, "items": {"type": "string"}},
+   "is_overdue": {"type": "boolean"},
+   "lease_seconds_overdue": {"type": "integer", "minimum": 0},
    "review_notes": {"type": "string", "maxLength": 2000},
    "attempt_count": {"type": "integer"}}}
 ```
+
+`blocked_by` appears **only** on the detail projection (never on the claim
+payload): an agent that claimed a task is by definition unblocked, so the ids
+would be ~8 tokens each of unusable data. On the detail read they answer a real
+question — "what is this task still waiting on?" — and each edge is satisfied
+once the blocker's Definition of Done reaches 100 %, in any status.
 
 **Example**
 
@@ -763,9 +781,9 @@ The most important module in the package. Django returns *rich* objects; agents 
 
 | Forbidden | Reason |
 | :--- | :--- |
-| `created_at`, `updated_at`, `claimed_at`, `submitted_at`, `completed_at`, `lease_expires_at`, `last_heartbeat_at` | clock data does not help write code; ~30 tokens each |
+| `created_at`, `updated_at`, `claimed_at`, `submitted_at`, `completed_at`, `lease_expires_at`, `last_heartbeat_at`, `lease_overdue_at` | clock data does not help write code; ~30 tokens each. `is_overdue` / `lease_seconds_overdue` are the only time facts an agent gets, and only so it can narrate a late finish |
 | `audit`, `audit_log`, `recent_events`, `events`, `history` | Master §4.3 — never echo history |
-| any FK uuid — `project_id`, `parent_task_id`, `discovered_during_task_id`, `blocked_by[]`, `blocks[]`, `child_task_ids[]` | unactionable identifiers at ~8 tokens each |
+| any FK uuid — `project_id`, `parent_task_id`, `discovered_during_task_id`, `blocks[]`, `child_task_ids[]` | unactionable identifiers at ~8 tokens each. **Exception:** `blocked_by[]` on `get_task_details` only (§7.8) |
 | `assets[*].sha256`, `byte_size`, `mime_type`, `url`, `source`, `filename` | the absolute path is the only useful field |
 | `is_agent_discovered`, `suggested_priority`, `discovered_by_agent`, `discovery_reason`, `review_summary`, `contract_version` | human-facing or constant metadata |
 | any `bytes`, base64 string, or `data:` URI | Master §4.1 hard prohibition |
@@ -1026,7 +1044,7 @@ Steps 5–8 are the only tool calls permitted *during* work; everything else is 
 
 ### 11.1 **Decision:** the agent calls `task_heartbeat`, not the MCP server
 
-The adapter contains **no timer, no thread, no background task** for heartbeats; `task_heartbeat` is a plain tool the agent must call. (1) A server-side heartbeat would keep a lease alive for a *dead* agent — the MCP process can outlive a crashed CLI — so the lease would never expire and the crash-recovery janitor (Master §5.2, Doc 03) would never reclaim the task, which is precisely the failure leases exist to prevent. (2) A heartbeat asserts work in progress, and only the worker can assert that. (3) P5 forbids background work, and there is one less lifecycle to reason about at shutdown. (4) Agent-driven heartbeats appear in the HUD stream (`agent.heartbeat`), giving a true per-project liveness signal.
+The adapter contains **no timer, no thread, no background task** for heartbeats; `task_heartbeat` is a plain tool the agent must call. (1) A heartbeat asserts work in progress, and only the worker can assert that. (2) P5 forbids background work, and there is one less lifecycle to reason about at shutdown. (3) Agent-driven heartbeats appear in the HUD stream (`agent.heartbeat`), giving a true per-project liveness signal. (4) A missed heartbeat is **not** fatal: it only lets the OVERDUE badge appear (Doc 03 §4.6), so the cost of forgetting is a UI cue rather than lost work.
 
 Consequence: the agent prompt states the 120 s cadence explicitly (§10.3 step 7), and `claim_next_task` returns `heartbeat_interval_seconds` so the number is data, not guesswork.
 
@@ -1039,7 +1057,7 @@ Consequence: the agent prompt states the 120 s cadence explicitly (§10.3 step 7
     "message": "Lease lea_01JA2Y7Q0K3M9V2T is no longer valid for task 5f2d…",
     "retryable": false,
     "hint": "STOP_WORK_AND_RECLAIM",
-    "detail": {"task_id": "5f2d…", "next": "claim_next_task", "discard_local_changes": false},
+    "detail": {"task_id": "5f2d…", "reason": "mismatch", "next": "claim_next_task", "discard_local_changes": false},
     "request_id": "req_01JA2Z3M8Q"
   }
 }
@@ -1047,19 +1065,28 @@ Consequence: the agent prompt states the 120 s cadence explicitly (§10.3 step 7
 
 | Field | Meaning |
 | :--- | :--- |
-| `hint` | fixed enum: `STOP_WORK_AND_RECLAIM`, `FIX_ARGUMENTS`, `BACKOFF`, `REPORT_TO_OPERATOR` |
+| `hint` | fixed enum: `STOP_WORK_AND_RECLAIM`, `FIX_ARGUMENTS`, `BACKOFF`, `REPORT_TO_OPERATOR`. The `STOP_WORK_AND_RECLAIM` token name is frozen (Doc 01 §15, `mcp_server/errors.py`); it now means "stop and **re-acquire** the task via `claim_next_task`", not "stop and recover a reclaimed lease" — expiry no longer reclaims anything |
+| `detail.reason` | always `"mismatch"` — expiry is no longer a rejection reason |
 | `detail.next` | the tool the agent should call next |
 | `detail.discard_local_changes` | always `false` — a stale lease does not imply lost work |
 
 **Agent obligation on `STOP_WORK_AND_RECLAIM`:** stop editing immediately, keep the working tree, do not submit, call `get_task_details` to learn the new status, then `claim_next_task`. If the same `task_id` returns, re-apply the stash and continue; if not, `propose_task` the partial findings and stop.
 
-Typical causes: (a) more than 900 s elapsed without a heartbeat; (b) the boot janitor reclaimed after a crash (Doc 01 T10); (c) a human force-released it (T11); (d) another session of the same agent claimed it.
+Typical causes: (a) a human force-released it (T11); (b) a reviewer rejected the submission and the task went back to `PENDING` (T9); (c) another session of the same agent claimed it.
+
+**What is no longer a cause:** elapsed time. An agent that runs over its estimate keeps its lease, keeps its work, and keeps its checklist; the only change is an `is_overdue: true` / `lease_seconds_overdue: N` pair in task payloads, which the agent may simply ignore.
 
 ### 11.3 120 s versus 900 s
 
-`ATLAS_LEASE_TTL_SECONDS = 900` is the lease lifetime, refreshed by every heartbeat; `ATLAS_HEARTBEAT_INTERVAL_SECONDS = 120` is the agent cadence. That is a **7.5×** safety factor, so one missed heartbeat is harmless and three consecutive misses mean the agent is genuinely stuck. Worst-case reclaim delay is TTL + `RECLAIM_GRACE_SECONDS` (60) = 16 min, the longest a task can stay invisible to other agents.
+`ATLAS_LEASE_TTL_SECONDS = 900` is the agent's **estimated completion time**, refreshed by every heartbeat; `ATLAS_HEARTBEAT_INTERVAL_SECONDS = 120` is the agent cadence. That is a **7.5×** safety factor, so one missed heartbeat is harmless.
 
-**Decision:** 120 s is *recommended*, not enforced — the adapter cannot detect a missed cadence without a timer (P5), and a client-side assertion would abort healthy work during a slow test run. For long local operations, heartbeat *before* starting anything that may exceed ~5 minutes, or split the work into chunks.
+`ATLAS_RECLAIM_GRACE_SECONDS = 60` no longer gates a reclaim: it is the delay
+after the estimate before `lease_overdue_at` is stamped, so a short clock skew
+does not flash an OVERDUE badge. **Nothing is ever taken from the agent by a
+clock.** Worst-case time-to-OVERDUE is TTL + grace = 16 min, and the task stays
+visible and owned throughout.
+
+**Decision:** 120 s is *recommended*, not enforced — the adapter cannot detect a missed cadence without a timer (P5), and a client-side assertion would abort healthy work during a slow test run. For long local operations, heartbeat *before* starting anything that may exceed ~5 minutes, or split the work into chunks. Running over is safe either way.
 
 ## 12. Concurrency & Idempotency
 
@@ -1238,7 +1265,9 @@ def test_claim_projects_and_trims(cfg):
 | I-1 | live Django: claim → log ×3 → DoD tick → submit | status reaches `IN_REVIEW`, 3 log lines, patch file exists |
 | I-2 | two MCP processes claim concurrently (20 iterations) | zero duplicate `task_id` (Doc 01 I2) |
 | I-3 | backend killed mid-`claim` | `BACKEND_UNAVAILABLE`, `retryable: true`, ≤ 3 attempts, elapsed < 2 s |
-| I-4 | heartbeat after lease expiry | `LEASE_INVALID` + `STOP_WORK_AND_RECLAIM` |
+| I-4 | heartbeat after the estimate passed | `200` — the lease renews and `lease_overdue_at` clears; only a `lease_id` mismatch produces `LEASE_INVALID` |
+| I-4b | heartbeat after a human force-release | `LEASE_INVALID` + `STOP_WORK_AND_RECLAIM` |
+| I-4c | sweeper flags a task overdue | `claim_next_task` still refuses it (it is `IN_PROGRESS`), and the owning agent can still submit |
 | I-5 | submit twice with an identical patch | identical body, exactly one `git_patch.patch` |
 | I-6 | propose twice inside 10 min | same `task_id` both times |
 | I-7 | `screenshot_paths` outside the root | `PATH_OUT_OF_SCOPE`, **zero** HTTP requests issued |

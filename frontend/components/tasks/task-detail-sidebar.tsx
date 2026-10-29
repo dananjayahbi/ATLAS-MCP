@@ -168,7 +168,11 @@ export function TaskDetailSidebar({
       <div className="flex flex-wrap items-center gap-1">
         <Badge tone="neutral">attempts {task.attempt_count}</Badge>
         <Badge tone="neutral">dep {task.dependency_weight}</Badge>
-        {task.is_blocked ? <Badge tone="review">BLOCKED</Badge> : null}
+        {task.is_blocked ? (
+          <Badge tone="review" title="Blocked — a blocker's Definition of Done is below 100%">
+            BLOCKED
+          </Badge>
+        ) : null}
         {task.is_agent_discovered ? <Badge tone="review">DISCOVERED</Badge> : null}
         {task.parent_task_id ? <Badge tone="neutral">SUBTASK</Badge> : null}
       </div>

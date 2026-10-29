@@ -159,7 +159,10 @@ export function TaskFilterBar({
           </select>
         ) : null}
 
-        <label className="inline-flex shrink-0 cursor-pointer items-center gap-1 font-machine text-hud-micro uppercase text-muted">
+        <label
+          className="inline-flex shrink-0 cursor-pointer items-center gap-1 font-machine text-hud-micro uppercase text-muted"
+          title="Tasks whose blocker has not yet reached 100% Definition of Done"
+        >
           <input
             type="checkbox"
             checked={blockedOnly}

@@ -46,7 +46,11 @@ export function MatrixTooltip({ point, x, y, className }: MatrixTooltipProps) {
         <dd className="text-right text-secondary">{point.dependency_weight}</dd>
       </dl>
       <div className="mt-1 flex flex-wrap gap-1">
-        {point.is_blocked ? <Badge tone="review">⛔ BLOCKED</Badge> : null}
+        {point.is_blocked ? (
+          <Badge tone="review" title="Blocked — a blocker's Definition of Done is below 100%">
+            ⛔ BLOCKED
+          </Badge>
+        ) : null}
         {point.is_agent_discovered ? <Badge tone="review">⚡ DISCOVERED</Badge> : null}
       </div>
     </div>

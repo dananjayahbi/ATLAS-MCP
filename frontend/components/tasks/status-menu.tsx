@@ -78,5 +78,6 @@ export function StatusMenu({ status, onChange, disabled = false, busy = false, c
 
 /** Why an agent filter exists at all: assignment is a lease, not a dropdown. */
 export const ASSIGNMENT_HINT =
-  "Agents self-assign by claiming a PENDING task (claim_next_task), which grants a 15-minute lease. " +
+  "Agents self-assign by claiming a PENDING task (claim_next_task), which starts a 15-minute lease estimate. " +
+  "Heartbeats renew it; a lapsed estimate only flags the task OVERDUE and never returns it to PENDING. " +
   "You can pre-bind a queued task with Claim for agent, or override the assignee while it is not leased.";

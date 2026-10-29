@@ -35,5 +35,13 @@ def lease_seconds_remaining(lease_expires_at: datetime | None, now: datetime | N
     return max(0, int(delta.total_seconds()))
 
 
+def lease_seconds_overdue(lease_expires_at: datetime | None, now: datetime | None = None) -> int:
+    """Seconds past the agent's estimate; `0` while still inside it."""
+    if lease_expires_at is None:
+        return 0
+    delta = (now or utcnow()) - lease_expires_at
+    return max(0, int(delta.total_seconds()))
+
+
 def iso(value: datetime | None) -> str | None:
     return iso_z(value)

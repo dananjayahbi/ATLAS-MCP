@@ -28,6 +28,8 @@ export function createTaskFromDiscovery(discovery: DiscoveryDTO): TaskSummaryDTO
     dependency_weight: 0,
     assigned_agent_id: null,
     lease_seconds_remaining: null,
+    is_overdue: false,
+    lease_seconds_overdue: 0,
     created_at: discovery.created_at ?? now,
     updated_at: now,
     archived_at: null,
@@ -89,6 +91,8 @@ export function applyTaskAction(id: string, action: string, archived: boolean | 
   detail.status = action === "archive" && !restoring ? "REJECTED" : "PENDING";
   detail.assigned_agent_id = null;
   detail.lease_seconds_remaining = null;
+  detail.is_overdue = false;
+  detail.lease_seconds_overdue = 0;
   db.tasks[id] = { ...db.tasks[id], ...stripDetail(detail) };
   if (!restoring) db.reviews = db.reviews.filter((review) => review.id !== id);
   syncCounters();
@@ -108,6 +112,9 @@ export function resolveReview(id: string, verb: string, payload: MockBody) {
   }
   detail.status = verb === "approve" ? "COMPLETED" : "PENDING";
   detail.review_notes = String(payload?.review_notes ?? "");
+  // The task leaves IN_PROGRESS, so any advisory overdue flag is stale.
+  detail.is_overdue = false;
+  detail.lease_seconds_overdue = 0;
   db.tasks[id] = { ...db.tasks[id], ...stripDetail(detail) };
   db.reviews = db.reviews.filter((review) => review.id !== id);
   syncCounters();
@@ -132,6 +139,9 @@ export function resolveDiscovery(id: string, verb: string, payload: MockBody) {
   const task = db.tasks[discovery.task_id] ?? createTaskFromDiscovery(discovery);
   task.status = "PENDING";
   task.priority = priority;
+  task.lease_seconds_remaining = null;
+  task.is_overdue = false;
+  task.lease_seconds_overdue = 0;
   db.tasks[task.id] = task;
   syncCounters();
   return clone(task);
@@ -153,6 +163,8 @@ export function createTask(slug: string, payload: MockBody): TaskSummaryDTO {
     dependency_weight: 0,
     assigned_agent_id: null,
     lease_seconds_remaining: null,
+    is_overdue: false,
+    lease_seconds_overdue: 0,
     created_at: now,
     updated_at: now,
     archived_at: null,
